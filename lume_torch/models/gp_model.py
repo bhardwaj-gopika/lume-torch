@@ -12,7 +12,7 @@ from botorch.models.transforms.outcome import OutcomeTransform
 from linear_operator.utils.cholesky import psd_safe_cholesky
 from linear_operator.operators import DiagLinearOperator
 
-from lume_model.models.prob_model_base import (
+from lume_torch.models.prob_model_base import (
     ProbModelBaseModel,
     TorchDistributionWrapper,
 )

@@ -5,9 +5,9 @@ from pydantic import model_validator
 import torch
 from torch.distributions import Distribution as TDistribution
 
-from lume_model.variables import DistributionVariable
-from lume_model.models.utils import InputDictModel, format_inputs, itemize_dict
-from lume_model.base import LUMEBaseModel
+from lume_torch.variables import DistributionVariable
+from lume_torch.models.utils import InputDictModel, format_inputs, itemize_dict
+from lume_torch.base import LUMEBaseModel
 
 
 class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name

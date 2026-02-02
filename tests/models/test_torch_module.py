@@ -8,7 +8,7 @@ import pytest
 try:
     import torch
     from botorch.models import SingleTaskGP
-    from lume_model.models import TorchModel, TorchModule
+    from lume_torch.models import TorchModel, TorchModule
 
     torch.manual_seed(42)
 except ImportError:

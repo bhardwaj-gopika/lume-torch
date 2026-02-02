@@ -1,5 +1,5 @@
 # Auto-generated version file
-lume_model/_version.py
+lume_torch/_version.py
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

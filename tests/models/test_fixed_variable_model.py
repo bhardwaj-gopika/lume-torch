@@ -4,8 +4,8 @@ import pytest
 
 try:
     import torch
-    from lume_model.variables import ScalarVariable
-    from lume_model.models.torch_module import (
+    from lume_torch.variables import ScalarVariable
+    from lume_torch.models.torch_module import (
         TorchModel,
         TorchModule,
         FixedVariableModel,
@@ -17,7 +17,7 @@ except ImportError:
 
 
 @pytest.fixture
-def synthetic_lume_model():
+def synthetic_lume_torch():
     """
     Create synthetic LUME model: f(x, y) = 0.5*x^2 + y^2
     """
@@ -45,9 +45,9 @@ def synthetic_lume_model():
 
 
 @pytest.fixture
-def prior_model(synthetic_lume_model):
+def prior_model(synthetic_lume_torch):
     """Create FixedVariableModel with y fixed at 1.0"""
-    return FixedVariableModel(model=synthetic_lume_model, fixed_values={"y": 1.0})
+    return FixedVariableModel(model=synthetic_lume_torch, fixed_values={"y": 1.0})
 
 
 def test_initialization(prior_model):

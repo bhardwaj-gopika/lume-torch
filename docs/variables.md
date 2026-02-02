@@ -1,6 +1,6 @@
 # Variables
 
-::: lume_model.variables
+::: lume_torch.variables
     options:
         members:
             - ConfigEnum

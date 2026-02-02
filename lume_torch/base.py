@@ -10,8 +10,8 @@ import yaml
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
-from lume_model.variables import ScalarVariable, get_variable, ConfigEnum
-from lume_model.utils import (
+from lume_torch.variables import ScalarVariable, get_variable, ConfigEnum
+from lume_torch.utils import (
     try_import_module,
     verify_unique_variable_names,
     serialize_variables,
@@ -19,7 +19,7 @@ from lume_model.utils import (
     variables_from_dict,
     replace_relative_paths,
 )
-from lume_model.mlflow_utils import register_model
+from lume_torch.mlflow_utils import register_model
 
 logger = logging.getLogger(__name__)
 
@@ -259,7 +259,7 @@ def model_kwargs_from_dict(config: dict) -> dict:
 
 
 class LUMEBaseModel(BaseModel, ABC):
-    """Abstract base class for models using lume-model variables.
+    """Abstract base class for models using lume-torch variables.
 
     Inheriting classes must define the evaluate method and variable names must be unique (respectively).
     Models build using this framework will be compatible with the lume-epics EPICS server and associated tools.

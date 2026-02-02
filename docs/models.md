@@ -1,6 +1,6 @@
 # Models
 
-::: lume_model.base
+::: lume_torch.base
     options:
         members:
             - LUMEBaseModel
@@ -13,13 +13,13 @@
             - recursive_deserialize
 
 
-::: lume_model.models.torch_model
+::: lume_torch.models.torch_model
     options:
         members:
             - TorchModel
             - InputDictModel
 
-::: lume_model.models.torch_module
+::: lume_torch.models.torch_module
     options:
         members:
             - TorchModule

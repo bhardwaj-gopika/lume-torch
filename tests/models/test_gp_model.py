@@ -11,8 +11,8 @@ try:
 except ImportError:
     pass
 
-from lume_model.models.gp_model import GPModel
-from lume_model.variables import ScalarVariable, DistributionVariable
+from lume_torch.models.gp_model import GPModel
+from lume_torch.variables import ScalarVariable, DistributionVariable
 
 random.seed(42)
 
@@ -252,14 +252,14 @@ class TestGPModel:
 
         input_variables = [ScalarVariable(name="input")]
         output_variables = [DistributionVariable(name="output")]
-        gp_lume_model = GPModel(
+        gp_lume_torch = GPModel(
             model=model_list_gp,
             input_variables=input_variables,
             output_variables=output_variables,
         )
-        lume_pred = gp_lume_model.evaluate({"input": test_x})
-        assert gp_lume_model.get_input_size() == 1
-        assert gp_lume_model.get_output_size() == 1
+        lume_pred = gp_lume_torch.evaluate({"input": test_x})
+        assert gp_lume_torch.get_input_size() == 1
+        assert gp_lume_torch.get_output_size() == 1
         assert len(lume_pred) == 1
         assert torch.allclose(posterior.mean, lume_pred["output"].mean.unsqueeze(-1))
         assert torch.allclose(
@@ -275,15 +275,15 @@ class TestGPModel:
             posterior = model_list_gp.posterior(train_x_raw)
         input_variables = [ScalarVariable(name="input1")]
         output_variables = [DistributionVariable(name="output1")]
-        gp_lume_model = GPModel(
+        gp_lume_torch = GPModel(
             model=model_list_gp,
             input_variables=input_variables,
             output_variables=output_variables,
         )
         input_dict = {"input1": train_x_raw}
-        output_dict = gp_lume_model.evaluate(input_dict)
-        assert gp_lume_model.get_input_size() == 1
-        assert gp_lume_model.get_output_size() == 1
+        output_dict = gp_lume_torch.evaluate(input_dict)
+        assert gp_lume_torch.get_input_size() == 1
+        assert gp_lume_torch.get_output_size() == 1
         assert len(output_dict) == 1
         assert torch.allclose(output_dict["output1"].mean, posterior.mean.squeeze(-1))
         assert torch.allclose(
@@ -298,14 +298,14 @@ class TestGPModel:
             DistributionVariable(name="output1"),
             DistributionVariable(name="output2"),
         ]
-        gp_lume_model = GPModel(
+        gp_lume_torch = GPModel(
             model=model_list_gp,
             input_variables=input_variables,
             output_variables=output_variables,
         )
-        output_dict = gp_lume_model.evaluate(input_dict)
-        assert gp_lume_model.get_input_size() == 1
-        assert gp_lume_model.get_output_size() == 2
+        output_dict = gp_lume_torch.evaluate(input_dict)
+        assert gp_lume_torch.get_input_size() == 1
+        assert gp_lume_torch.get_output_size() == 2
         assert len(output_dict) == 2
         assert torch.allclose(output_dict["output1"].mean, posterior.mean[:, 0])
         assert torch.allclose(output_dict["output1"].variance, posterior.variance[:, 0])
@@ -316,14 +316,14 @@ class TestGPModel:
         model_list_gp = ModelListGP(model2)
         with torch.no_grad():
             posterior = model_list_gp.posterior(train_x_raw)
-        gp_lume_model = GPModel(
+        gp_lume_torch = GPModel(
             model=model_list_gp,
             input_variables=input_variables,
             output_variables=output_variables,
         )
-        output_dict = gp_lume_model.evaluate(input_dict)
-        assert gp_lume_model.get_input_size() == 1
-        assert gp_lume_model.get_output_size() == 2
+        output_dict = gp_lume_torch.evaluate(input_dict)
+        assert gp_lume_torch.get_input_size() == 1
+        assert gp_lume_torch.get_output_size() == 2
         assert len(output_dict) == 2
         assert torch.allclose(output_dict["output1"].mean, posterior.mean[:, 0])
         assert torch.allclose(output_dict["output1"].variance, posterior.variance[:, 0])
@@ -340,14 +340,14 @@ class TestGPModel:
             DistributionVariable(name="output3"),
             DistributionVariable(name="output4"),
         ]
-        gp_lume_model = GPModel(
+        gp_lume_torch = GPModel(
             model=model_list_gp,
             input_variables=input_variables,
             output_variables=output_variables,
         )
-        output_dict = gp_lume_model.evaluate(input_dict)
-        assert gp_lume_model.get_input_size() == 1
-        assert gp_lume_model.get_output_size() == 4
+        output_dict = gp_lume_torch.evaluate(input_dict)
+        assert gp_lume_torch.get_input_size() == 1
+        assert gp_lume_torch.get_output_size() == 4
         assert len(output_dict) == 4
         assert torch.allclose(output_dict["output1"].mean, posterior.mean[:, 0])
         assert torch.allclose(output_dict["output1"].variance, posterior.variance[:, 0])
@@ -376,7 +376,7 @@ class TestGPModel:
             DistributionVariable(name="output1"),
             DistributionVariable(name="output2"),
         ]
-        lume_model = GPModel(
+        lume_torch = GPModel(
             model=model_list_gp,
             input_variables=single_task_gp_model_kwargs["input_variables"],
             output_variables=output_variables,
@@ -391,9 +391,9 @@ class TestGPModel:
             abs(output_transformer.stdvs.squeeze(0)) ** 2 * original_pred.variance
         )
         # Predict with GPModel
-        lume_pred = lume_model.evaluate({"input": test_x})
-        assert lume_model.get_input_size() == 1
-        assert lume_model.get_output_size() == 2
+        lume_pred = lume_torch.evaluate({"input": test_x})
+        assert lume_torch.get_input_size() == 1
+        assert lume_torch.get_output_size() == 2
         assert len(lume_pred) == 2
         assert torch.allclose(original_mean[:, 0], lume_pred["output1"].mean)
         assert torch.allclose(original_variance[:, 0], lume_pred["output1"].variance)
@@ -407,7 +407,7 @@ class TestGPModel:
             DistributionVariable(name="output1"),
             DistributionVariable(name="output2"),
         ]
-        lume_model = GPModel(
+        lume_torch = GPModel(
             model=model_list_gp,
             input_variables=single_task_gp_model_kwargs["input_variables"],
             output_variables=output_variables,
@@ -416,7 +416,7 @@ class TestGPModel:
         )
 
         # Predict with original model
-        # We have to transform twice to match the lume-model behavior in this case
+        # We have to transform twice to match the lume-torch behavior in this case
         test_x_tf = input_transformer.transform(test_x)
         original_pred = model_list_gp.posterior(test_x_tf)
         original_mean = output_transformer.untransform(original_pred.mean)[0]
@@ -424,9 +424,9 @@ class TestGPModel:
             abs(output_transformer.stdvs.squeeze(0)) ** 2 * original_pred.variance
         )
         # Predict with GPModel
-        lume_pred = lume_model.evaluate({"input": test_x})
-        assert lume_model.get_input_size() == 1
-        assert lume_model.get_output_size() == 2
+        lume_pred = lume_torch.evaluate({"input": test_x})
+        assert lume_torch.get_input_size() == 1
+        assert lume_torch.get_output_size() == 2
         assert len(lume_pred) == 2
         assert torch.allclose(original_mean[:, 0], lume_pred["output1"].mean)
         assert torch.allclose(original_variance[:, 0], lume_pred["output1"].variance)
@@ -434,7 +434,7 @@ class TestGPModel:
         assert torch.allclose(original_variance[:, 1], lume_pred["output2"].variance)
 
         # Dump and load the model
-        lume_model.dump("test.yml")
+        lume_torch.dump("test.yml")
         loaded_model = GPModel("test.yml")
         lume_pred_loaded = loaded_model.evaluate({"input": test_x})
         assert torch.allclose(

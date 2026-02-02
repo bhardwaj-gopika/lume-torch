@@ -7,9 +7,9 @@ import torch
 from pydantic import field_validator
 from botorch.models.transforms.input import ReversibleInputTransform
 
-from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable
-from lume_model.models.utils import itemize_dict, format_inputs, InputDictModel
+from lume_torch.base import LUMEBaseModel
+from lume_torch.variables import ScalarVariable
+from lume_torch.models.utils import itemize_dict, format_inputs, InputDictModel
 
 logger = logging.getLogger(__name__)
 

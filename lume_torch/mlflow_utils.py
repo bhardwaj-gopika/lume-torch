@@ -19,7 +19,7 @@ except ImportError:
 
 
 def register_model(
-    lume_model,
+    lume_torch,
     artifact_path: str,
     registered_model_name: str | None = None,
     tags: dict[str, Any] | None = None,
@@ -42,7 +42,7 @@ def register_model(
     Note that at the moment, this does not log artifacts for custom models other than the YAML dump file.
 
     Args:
-        lume_model: LumeModel to register.
+        lume_torch: LUMETorch to register.
         artifact_path: Path to store the model in MLflow.
         registered_model_name: Name of the registered model in MLflow.
         tags: Tags to add to the MLflow model.
@@ -70,16 +70,16 @@ def register_model(
         else nullcontext()
     )
     with ctx:
-        if isinstance(lume_model, nn.Module):
+        if isinstance(lume_torch, nn.Module):
             model_info = mlflow.pytorch.log_model(
-                pytorch_model=lume_model,
+                pytorch_model=lume_torch,
                 artifact_path=artifact_path,
                 registered_model_name=registered_model_name,
                 **kwargs,
             )
         else:
             # Create pyfunc model for MLflow to be able to log/load the model
-            pf_model = create_mlflow_model(lume_model)
+            pf_model = create_mlflow_model(lume_torch)
             model_info = mlflow.pyfunc.log_model(
                 python_model=pf_model,
                 artifact_path=artifact_path,
@@ -93,13 +93,13 @@ def register_model(
             run_name = mlflow.active_run().info.run_name
             name = registered_model_name or f"{run_name}"
 
-            lume_model.dump(f"{name}.yml", save_jit=save_jit)
+            lume_torch.dump(f"{name}.yml", save_jit=save_jit)
             mlflow.log_artifact(f"{name}.yml", artifact_path)
             os.remove(f"{name}.yml")
 
-            from lume_model.models import registered_models
+            from lume_torch.models import registered_models
 
-            if type(lume_model) in registered_models:
+            if type(lume_torch) in registered_models:
                 # all registered models are torch models at the moment
                 # may change in the future
                 mlflow.log_artifact(f"{name}_model.pt", artifact_path)
@@ -109,17 +109,17 @@ def register_model(
                     os.remove(f"{name}_model.jit")
 
                 # Get and log the input and output transformers
-                lume_model = (
-                    lume_model._model
-                    if isinstance(lume_model, nn.Module)
-                    else lume_model
+                lume_torch = (
+                    lume_torch._model
+                    if isinstance(lume_torch, nn.Module)
+                    else lume_torch
                 )
-                for i in range(len(lume_model.input_transformers)):
+                for i in range(len(lume_torch.input_transformers)):
                     mlflow.log_artifact(
                         f"{name}_input_transformers_{i}.pt", artifact_path
                     )
                     os.remove(f"{name}_input_transformers_{i}.pt")
-                for i in range(len(lume_model.output_transformers)):
+                for i in range(len(lume_torch.output_transformers)):
                     mlflow.log_artifact(
                         f"{name}_output_transformers_{i}.pt", artifact_path
                     )
@@ -160,14 +160,14 @@ def create_mlflow_model(model) -> mlflow.pyfunc.PythonModel:
 
 class PyFuncModel(mlflow.pyfunc.PythonModel):
     """
-    Custom MLflow model class for LumeModel.
+    Custom MLflow model class for LUMETorch.
     Uses Pyfunc to define a model that can be saved and loaded with MLflow.
 
     Must implement the `predict` method.
     """
 
     # Disable type hint validation for the predict method to avoid annoying warnings
-    # since we have type validation in the lume-model itself.
+    # since we have type validation in the lume-torch itself.
     _skip_type_hint_validation = True
 
     def __init__(self, model):
@@ -183,5 +183,5 @@ class PyFuncModel(mlflow.pyfunc.PythonModel):
     def load_model(self):
         raise NotImplementedError("Load model not implemented")
 
-    def get_lume_model(self):
+    def get_lume_torch(self):
         return self.model

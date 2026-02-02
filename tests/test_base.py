@@ -1,11 +1,9 @@
 import os
-import io
-import sys
 import pytest
 import yaml
 
-from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable
+from lume_torch.base import LUMEBaseModel
+from lume_torch.variables import ScalarVariable
 
 
 class ExampleModel(LUMEBaseModel):
@@ -120,10 +118,8 @@ class TestBaseModel:
         # a warning is printed
         example_model.input_validation_config = {input_variables[0].name: "warn"}
         input_dict[input_variables[0].name] = 6.0
-        fake_out = io.StringIO()
-        monkeypatch.setattr(sys, "stdout", fake_out)
-        example_model.input_validation(input_dict)
-        assert "Warning" in fake_out.getvalue()
+        with pytest.warns(UserWarning):
+            example_model.input_validation(input_dict)
 
         # nothing is printed/raised
         example_model.input_validation_config = {input_variables[0].name: "none"}

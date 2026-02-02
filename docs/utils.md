@@ -1,6 +1,6 @@
 # Utilities
 
-::: lume_model.utils
+::: lume_torch.utils
     options:
         members:
             - variables_as_yaml

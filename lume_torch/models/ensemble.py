@@ -9,8 +9,8 @@ import torch
 from torch.distributions import Normal
 from torch.distributions.distribution import Distribution as TDistribution
 
-from lume_model.models.prob_model_base import ProbModelBaseModel
-from lume_model.models.torch_model import TorchModel
+from lume_torch.models.prob_model_base import ProbModelBaseModel
+from lume_torch.models.torch_model import TorchModel
 
 
 class NNEnsemble(ProbModelBaseModel):

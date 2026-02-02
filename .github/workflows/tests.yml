@@ -20,9 +20,9 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           channels: conda-forge,defaults
-          activate-environment: lume-model-dev
+          activate-environment: lume-torch-dev
 
-      - name: Install lume-model
+      - name: Install lume-torch
         shell: bash -l {0}
         run: |
           pip install -e ".[dev]"

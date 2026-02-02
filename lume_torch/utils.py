@@ -4,7 +4,7 @@ import yaml
 import importlib
 from typing import Union, get_origin, get_args
 
-from lume_model.variables import ScalarVariable, get_variable
+from lume_torch.variables import ScalarVariable, get_variable
 
 
 def try_import_module(name: str):

@@ -11,8 +11,8 @@ try:
         AffineInputTransform,
         ReversibleInputTransform,
     )
-    from lume_model.models import TorchModel
-    from lume_model.variables import ScalarVariable
+    from lume_torch.models import TorchModel
+    from lume_torch.variables import ScalarVariable
 
     torch.manual_seed(42)
 except ImportError:

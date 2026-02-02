@@ -6,9 +6,9 @@ from typing import Union, Any
 
 import torch
 
-from lume_model.base import parse_config, recursive_serialize
-from lume_model.models.torch_model import TorchModel
-from lume_model.mlflow_utils import register_model
+from lume_torch.base import parse_config, recursive_serialize
+from lume_torch.models.torch_model import TorchModel
+from lume_torch.mlflow_utils import register_model
 
 
 class TorchModule(torch.nn.Module):

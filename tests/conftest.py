@@ -4,15 +4,15 @@ from typing import Any, Union
 
 import pytest
 
-from lume_model.utils import variables_from_yaml
-from lume_model.variables import ScalarVariable, DistributionVariable
+from lume_torch.utils import variables_from_yaml
+from lume_torch.variables import ScalarVariable, DistributionVariable
 
 try:
     import torch
     from botorch.models.transforms.input import AffineInputTransform  # noqa: F401
     from botorch.models.transforms.outcome import Standardize  # noqa: F401
     from botorch.models import MultiTaskGP, SingleTaskGP
-    from lume_model.models import TorchModel, TorchModule
+    from lume_torch.models import TorchModel, TorchModule
 except ModuleNotFoundError:
     pass
 

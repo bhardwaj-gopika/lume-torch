@@ -31,7 +31,7 @@ conda env create -f dev-environment.yml
 Install as editable:
 
 ```
-conda activate lume-model-dev
+conda activate lume-torch-dev
 pip install --no-dependencies -e .
 ```
 
@@ -49,12 +49,12 @@ pre-commit install
 
 ## Variables
 
-The lume-model variables are intended to enforce requirements for input and output variables by variable type. For now, only scalar variables (floats) are supported.
+The lume-torch variables are intended to enforce requirements for input and output variables by variable type. For now, only scalar variables (floats) are supported.
 
 Minimal example of scalar input and output variables:
 
 ```python
-from lume_model.variables import ScalarVariable
+from lume_torch.variables import ScalarVariable
 
 input_variable = ScalarVariable(
     name="example_input",
@@ -71,7 +71,7 @@ them will raise an error message.
 
 ## Models
 
-The lume-model base class `lume_model.base.LUMEBaseModel` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
+The lume-torch base class `lume_torch.base.LUMEBaseModel` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
 
 Requirements for model classes:
 
@@ -83,8 +83,8 @@ Requirements for model classes:
 Example model implementation and instantiation:
 
 ```python
-from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable
+from lume_torch.base import LUMEBaseModel
+from lume_torch.variables import ScalarVariable
 
 
 class ExampleModel(LUMEBaseModel):
@@ -141,7 +141,7 @@ output_variables:
 and can be loaded by simply passing the file to the model constructor:
 
 ```python
-from lume_model.base import LUMEBaseModel
+from lume_torch.base import LUMEBaseModel
 
 
 class ExampleModel(LUMEBaseModel):
@@ -215,7 +215,7 @@ precision: double
 The TorchModel can then be loaded:
 
 ```python
-from lume_model.models.torch_model import TorchModel
+from lume_torch.models.torch_model import TorchModel
 
 # Load the model from a YAML file
 torch_model = TorchModel("path/to/model_config.yml")
@@ -281,7 +281,7 @@ get tensor-type outputs.
 
 ```python
 from torch import tensor
-from lume_model.models.torch_module import TorchModule
+from lume_torch.models.torch_module import TorchModule
 
 
 # Example input tensor

@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   build:
-    if: ${{ github.repository == 'slaclab/lume-model' }}
+    if: ${{ github.repository == 'slaclab/lume-torch' }}
     runs-on: ubuntu-latest
     name:  Build docs
     steps:
@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: 3.12
           channels: conda-forge,defaults
-          activate-environment: lume-model-dev
+          activate-environment: lume-torch-dev
       - name: Build package
         shell: bash -l {0}
         run: |
