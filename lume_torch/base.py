@@ -45,16 +45,26 @@ def process_torch_module(
 ):
     """Optionally saves the given torch module to file and returns the filename.
 
-    Args:
-        base_key: Base key at this stage of serialization.
-        key: Key corresponding to the torch module.
-        module: The torch module to process.
-        file_prefix: Prefix for generated filenames.
-        save_modules: Determines whether torch modules are saved to file.
-        save_jit: Determines whether the model gets saved as TorchScript.
+    Parameters
+    ----------
+    module : torch.nn.Module
+        The torch module to process.
+    base_key : str, optional
+        Base key at this stage of serialization.
+    key : str, optional
+        Key corresponding to the torch module.
+    file_prefix : str or os.PathLike, optional
+        Prefix for generated filenames.
+    save_modules : bool, optional
+        Determines whether torch modules are saved to file.
+    save_jit : bool, optional
+        Determines whether the model gets saved as TorchScript.
 
-    Returns:
+    Returns
+    -------
+    str
         Filename under which the torch module is (or would be) saved.
+
     """
     torch = try_import_module("torch")
     filepath_prefix, filename_prefix = os.path.split(file_prefix)
@@ -93,15 +103,24 @@ def recursive_serialize(
 ):
     """Recursively performs custom serialization for the given object.
 
-    Args:
-        v: Object to serialize.
-        base_key: Base key at this stage of serialization.
-        file_prefix: Prefix for generated filenames.
-        save_models: Determines whether models are saved to file.
-        save_jit: Determines whether the model is saved as TorchScript.
+    Parameters
+    ----------
+    v : dict of str to Any
+        Object to serialize.
+    base_key : str, optional
+        Base key at this stage of serialization.
+    file_prefix : str or os.PathLike, optional
+        Prefix for generated filenames.
+    save_models : bool, optional
+        Determines whether models are saved to file.
+    save_jit : bool, optional
+        Determines whether the model is saved as TorchScript.
 
-    Returns:
+    Returns
+    -------
+    dict
         Serialized object.
+
     """
     logger.debug(
         f"Serializing object with base_key: '{base_key}', {len(v)} top-level keys"
@@ -171,11 +190,16 @@ def recursive_serialize(
 def recursive_deserialize(v):
     """Recursively performs custom deserialization for the given object.
 
-    Args:
-        v: Object to deserialize.
+    Parameters
+    ----------
+    v : dict
+        Object to deserialize.
 
-    Returns:
+    Returns
+    -------
+    dict
         Deserialized object.
+
     """
     logger.debug(f"Deserializing object with {len(v)} top-level keys")
     # deserialize
@@ -197,15 +221,24 @@ def json_dumps(
 ):
     """Serializes variables before dumping with json.
 
-    Args:
-        v: Object to dump.
-        base_key: Base key for serialization.
-        file_prefix: Prefix for generated filenames.
-        save_models: Determines whether models are saved to file.
-        save_jit: Determines whether the model is saved as TorchScript.
+    Parameters
+    ----------
+    v : object
+        Object to dump.
+    base_key : str, optional
+        Base key for serialization.
+    file_prefix : str or os.PathLike, optional
+        Prefix for generated filenames.
+    save_models : bool, optional
+        Determines whether models are saved to file.
+    save_jit : bool, optional
+        Determines whether the model is saved as TorchScript.
 
-    Returns:
+    Returns
+    -------
+    str
         JSON formatted string.
+
     """
     v = recursive_serialize(
         v.model_dump(), base_key, file_prefix, save_models, save_jit
@@ -217,11 +250,16 @@ def json_dumps(
 def json_loads(v):
     """Loads JSON formatted string and recursively deserializes the result.
 
-    Args:
-        v: JSON formatted string to load.
+    Parameters
+    ----------
+    v : str
+        JSON formatted string to load.
 
-    Returns:
+    Returns
+    -------
+    dict
         Deserialized object.
+
     """
     v = json.loads(v)
     v = recursive_deserialize(v)
@@ -234,12 +272,18 @@ def parse_config(
 ) -> dict:
     """Parses model configuration and returns keyword arguments for model constructor.
 
-    Args:
-        config: Model configuration as dictionary, YAML or JSON formatted string, file or file path.
-        model_fields: Fields expected by the model (required for replacing relative paths).
+    Parameters
+    ----------
+    config : dict, str, TextIOWrapper, or os.PathLike
+        Model configuration as dictionary, YAML or JSON formatted string, file or file path.
+    model_fields : dict, optional
+        Fields expected by the model (required for replacing relative paths).
 
-    Returns:
+    Returns
+    -------
+    dict
         Configuration as keyword arguments for model constructor.
+
     """
     config_file = None
     if isinstance(config, dict):
@@ -269,11 +313,16 @@ def parse_config(
 def model_kwargs_from_dict(config: dict) -> dict:
     """Processes model configuration and returns the corresponding keyword arguments for model constructor.
 
-    Args:
-        config: Model configuration.
+    Parameters
+    ----------
+    config : dict
+        Model configuration.
 
-    Returns:
+    Returns
+    -------
+    dict
         Configuration as keyword arguments for model constructor.
+
     """
     config = deserialize_variables(config)
     if all(key in config.keys() for key in ["input_variables", "output_variables"]):
@@ -287,16 +336,46 @@ def model_kwargs_from_dict(config: dict) -> dict:
 class LUMEBaseModel(BaseModel, ABC):
     """Abstract base class for models using lume-torch variables.
 
-    Inheriting classes must define the evaluate method and variable names must be unique (respectively).
-    Models build using this framework will be compatible with the lume-epics EPICS server and associated tools.
+    Inheriting classes must define the _evaluate method and variable names must be unique.
+    Models built using this framework will be compatible with the lume-epics EPICS server and associated tools.
 
-    Attributes:
-        input_variables: List defining the input variables and their order.
-        output_variables: List defining the output variables and their order.
-        input_validation_config: Determines the behavior during input validation by specifying the validation
-          config for each input variable: {var_name: value}. Value can be "warn", "error", or "none".
-        output_validation_config: Determines the behavior during output validation by specifying the validation
-          config for each output variable: {var_name: value}. Value can be "warn", "error", or "none".
+    Attributes
+    ----------
+    input_variables : list of ScalarVariable
+        List defining the input variables and their order.
+    output_variables : list of ScalarVariable
+        List defining the output variables and their order.
+    input_validation_config : dict of str to ConfigEnum, optional
+        Determines the behavior during input validation by specifying the validation
+        config for each input variable: {var_name: value}. Value can be "warn", "error", or "none".
+    output_validation_config : dict of str to ConfigEnum, optional
+        Determines the behavior during output validation by specifying the validation
+        config for each output variable: {var_name: value}. Value can be "warn", "error", or "none".
+
+    Methods
+    -------
+    evaluate(input_dict, **kwargs)
+        Main evaluation function that validates inputs, calls _evaluate, and validates outputs.
+    input_validation(input_dict)
+        Validates input dictionary values against input variable specifications.
+    output_validation(output_dict)
+        Validates output dictionary values against output variable specifications.
+    yaml(base_key="", file_prefix="", save_models=False, save_jit=False)
+        Serializes the model to a YAML formatted string.
+    dump(file, base_key="", save_models=True, save_jit=False)
+        Saves model configuration and associated files to disk.
+    from_file(filename)
+        Class method to load a model from a YAML file.
+    from_yaml(yaml_obj)
+        Class method to load a model from a YAML string or file object.
+    register_to_mlflow(artifact_path, **kwargs)
+        Registers the model to MLflow for experiment tracking.
+
+    Notes
+    -----
+    Subclasses must implement the abstract method `_evaluate(input_dict, **kwargs)` which performs
+    the actual model computation.
+
     """
 
     input_variables: list[ScalarVariable]
@@ -308,6 +387,24 @@ class LUMEBaseModel(BaseModel, ABC):
 
     @field_validator("input_variables", "output_variables", mode="before")
     def validate_input_variables(cls, value):
+        """Validates and converts input/output variables to proper format.
+
+        Parameters
+        ----------
+        value : dict or list
+            Variables as dictionary or list to validate and convert.
+
+        Returns
+        -------
+        list of ScalarVariable
+            List of validated variable instances.
+
+        Raises
+        ------
+        TypeError
+            If variable type is not supported.
+
+        """
         new_value = []
         if isinstance(value, dict):
             for name, val in value.items():
@@ -325,10 +422,20 @@ class LUMEBaseModel(BaseModel, ABC):
     def __init__(self, *args, **kwargs):
         """Initializes LUMEBaseModel.
 
-        Args:
-            *args: Accepts a single argument which is the model configuration as dictionary, YAML or JSON
-              formatted string or file path.
-            **kwargs: See class attributes.
+        Parameters
+        ----------
+        *args : dict, str, or os.PathLike
+            Accepts a single argument which is the model configuration as dictionary, YAML or JSON
+            formatted string or file path.
+        **kwargs
+            See class attributes.
+
+        Raises
+        ------
+        ValueError
+            If both YAML config and keyword arguments are provided, or if more than one
+            positional argument is provided.
+
         """
         if len(args) == 1:
             if len(kwargs) > 0:
@@ -389,6 +496,19 @@ class LUMEBaseModel(BaseModel, ABC):
         pass
 
     def input_validation(self, input_dict: dict[str, Any]) -> dict[str, Any]:
+        """Validates input dictionary values against input variable specifications.
+
+        Parameters
+        ----------
+        input_dict : dict of str to Any
+            Dictionary of input variable names to values.
+
+        Returns
+        -------
+        dict of str to Any
+            Validated input dictionary.
+
+        """
         for name, value in input_dict.items():
             _config = (
                 "none"
@@ -400,6 +520,19 @@ class LUMEBaseModel(BaseModel, ABC):
         return input_dict
 
     def output_validation(self, output_dict: dict[str, Any]) -> dict[str, Any]:
+        """Validates output dictionary values against output variable specifications.
+
+        Parameters
+        ----------
+        output_dict : dict of str to Any
+            Dictionary of output variable names to values.
+
+        Returns
+        -------
+        dict of str to Any
+            Validated output dictionary.
+
+        """
         for name, value in output_dict.items():
             _config = (
                 None
@@ -411,15 +544,54 @@ class LUMEBaseModel(BaseModel, ABC):
         return output_dict
 
     def to_json(self, **kwargs) -> str:
+        """Serializes the model to a JSON formatted string.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments for serialization (base_key, file_prefix, save_models, save_jit).
+
+        Returns
+        -------
+        str
+            JSON formatted string defining the model.
+
+        """
         return json_dumps(self, **kwargs)
 
     def model_dump(self, **kwargs) -> dict[str, Any]:
+        """Dumps the model configuration as a dictionary.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments for Pydantic's model_dump.
+
+        Returns
+        -------
+        dict of str to Any
+            Dictionary containing the model configuration including model_class name.
+
+        """
         config = super().model_dump(**kwargs)
         config["input_variables"] = [var.model_dump() for var in self.input_variables]
         config["output_variables"] = [var.model_dump() for var in self.output_variables]
         return {"model_class": self.__class__.__name__} | config
 
     def json(self, **kwargs) -> str:
+        """Serializes the model to a JSON formatted string.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments for serialization.
+
+        Returns
+        -------
+        str
+            JSON formatted string defining the model.
+
+        """
         result = self.to_json(**kwargs)
         config = json.loads(result)
         return json.dumps(config)
@@ -433,13 +605,22 @@ class LUMEBaseModel(BaseModel, ABC):
     ) -> str:
         """Serializes the object and returns a YAML formatted string defining the model.
 
-        Args:
-            base_key: Base key for serialization.
-            file_prefix: Prefix for generated filenames.
-            save_models: Determines whether models are saved to file.
-            save_jit: Determines whether the model is saved as TorchScript
-        Returns:
+        Parameters
+        ----------
+        base_key : str, optional
+            Base key for serialization.
+        file_prefix : str, optional
+            Prefix for generated filenames.
+        save_models : bool, optional
+            Determines whether models are saved to file.
+        save_jit : bool, optional
+            Determines whether the model is saved as TorchScript.
+
+        Returns
+        -------
+        str
             YAML formatted string defining the model.
+
         """
         output = json.loads(
             self.to_json(
@@ -461,11 +642,17 @@ class LUMEBaseModel(BaseModel, ABC):
     ):
         """Returns and optionally saves YAML formatted string defining the model.
 
-        Args:
-            file: File path to which the YAML formatted string and corresponding files are saved.
-            base_key: Base key for serialization.
-            save_models: Determines whether models are saved to file.
-            save_jit: Determines whether the model is saved as TorchScript.
+        Parameters
+        ----------
+        file : str or os.PathLike
+            File path to which the YAML formatted string and corresponding files are saved.
+        base_key : str, optional
+            Base key for serialization.
+        save_models : bool, optional
+            Determines whether models are saved to file.
+        save_jit : bool, optional
+            Determines whether the model is saved as TorchScript.
+
         """
         logger.info(f"Dumping model configuration to: {file}")
         if save_models:
@@ -485,6 +672,24 @@ class LUMEBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_file(cls, filename: str):
+        """Loads a model from a YAML file.
+
+        Parameters
+        ----------
+        filename : str
+            Path to the YAML file containing the model configuration.
+
+        Returns
+        -------
+        LUMEBaseModel
+            Instance of the model loaded from the file.
+
+        Raises
+        ------
+        OSError
+            If the file does not exist.
+
+        """
         if not os.path.exists(filename):
             raise OSError(f"File {filename} is not found.")
         with open(filename, "r") as file:
@@ -492,6 +697,19 @@ class LUMEBaseModel(BaseModel, ABC):
 
     @classmethod
     def from_yaml(cls, yaml_obj: [str, TextIOWrapper]):
+        """Loads a model from a YAML string or file object.
+
+        Parameters
+        ----------
+        yaml_obj : str or TextIOWrapper
+            YAML formatted string or file object containing the model configuration.
+
+        Returns
+        -------
+        LUMEBaseModel
+            Instance of the model loaded from the YAML configuration.
+
+        """
         return cls.model_validate(parse_config(yaml_obj, cls.model_fields))
 
     def register_to_mlflow(
@@ -506,28 +724,41 @@ class LUMEBaseModel(BaseModel, ABC):
         save_jit: bool = False,
         **kwargs,
     ):
-        """
-        Registers the model to MLflow if mlflow is installed. Each time this function is called, a new version
-        of the model is created. The model is saved to the tracking server or local directory, depending on the
-        MLFLOW_TRACKING_URI.
+        """Registers the model to MLflow if mlflow is installed.
+
+        Each time this function is called, a new version of the model is created. The model is saved to the
+        tracking server or local directory, depending on the MLFLOW_TRACKING_URI.
 
         If no tracking server is set up, data and artifacts are saved directly under your current directory. To set up
         a tracking server, set the environment variable MLFLOW_TRACKING_URI, e.g. a local port/path. See
         https://mlflow.org/docs/latest/getting-started/intro-quickstart/ for more info.
 
-        Args:
-            artifact_path: Path to store the model in MLflow.
-            registered_model_name: Name of the registered model in MLflow. Optional.
-            tags: Tags to add to the MLflow model. Optional.
-            version_tags: Tags to add to this MLflow model version. Optional.
-            alias: Alias to add to this MLflow model version. Optional.
-            run_name: Name of the MLflow run. Optional.
-            log_model_dump: Whether to log the model dump files as artifacts. Optional.
-            save_jit: Whether to save the model as TorchScript when calling model.dump, if log_model_dump=True. Optional.
-            **kwargs: Additional arguments for mlflow.pyfunc.log_model.
+        Parameters
+        ----------
+        artifact_path : str
+            Path to store the model in MLflow.
+        registered_model_name : str or None, optional
+            Name of the registered model in MLflow.
+        tags : dict of str to Any or None, optional
+            Tags to add to the MLflow model.
+        version_tags : dict of str to Any or None, optional
+            Tags to add to this MLflow model version.
+        alias : str or None, optional
+            Alias to add to this MLflow model version.
+        run_name : str or None, optional
+            Name of the MLflow run.
+        log_model_dump : bool, optional
+            Whether to log the model dump files as artifacts.
+        save_jit : bool, optional
+            Whether to save the model as TorchScript when calling model.dump, if log_model_dump=True.
+        **kwargs
+            Additional arguments for mlflow.pyfunc.log_model.
 
-        Returns:
-            Model info metadata, mlflow.models.model.ModelInfo.
+        Returns
+        -------
+        mlflow.models.model.ModelInfo
+            Model info metadata.
+
         """
         return register_model(
             self,

@@ -32,10 +32,10 @@ def register_model(
     save_jit: bool = False,
     **kwargs,
 ) -> Any:
-    """
-    Registers the model to MLflow if mlflow is installed. Each time this function is called, a new version
-    of the model is created. The model is saved to the tracking server or local directory, depending on the
-    MLFLOW_TRACKING_URI.
+    """Registers the model to MLflow if mlflow is installed.
+
+    Each time this function is called, a new version of the model is created. The model is saved to the tracking
+    server or local directory, depending on the MLFLOW_TRACKING_URI.
 
     If no tracking server is set up, data and artifacts are saved directly under your current directory. To set up
     a tracking server, set the environment variable MLFLOW_TRACKING_URI, e.g. a local port/path. See
@@ -43,20 +43,39 @@ def register_model(
 
     Note that at the moment, this does not log artifacts for custom models other than the YAML dump file.
 
-    Args:
-        lume_torch: LUMETorch to register.
-        artifact_path: Path to store the model in MLflow.
-        registered_model_name: Name of the registered model in MLflow.
-        tags: Tags to add to the MLflow model.
-        version_tags: Tags to add to this MLflow model version.
-        alias: Alias to add to this MLflow model version.
-        run_name: Name of the MLflow run.
-        log_model_dump: If True, the model dump is logged to MLflow.
-        save_jit: If True, the model is saved as a JIT model when calling model.dump, if log_model_dump=True.
-        **kwargs: Additional arguments for mlflow.pyfunc.log_model.
+    Parameters
+    ----------
+    lume_torch : LUMETorch
+        LUMETorch to register.
+    artifact_path : str
+        Path to store the model in MLflow.
+    registered_model_name : str or None, optional
+        Name of the registered model in MLflow.
+    tags : dict of str to Any or None, optional
+        Tags to add to the MLflow model.
+    version_tags : dict of str to Any or None, optional
+        Tags to add to this MLflow model version.
+    alias : str or None, optional
+        Alias to add to this MLflow model version.
+    run_name : str or None, optional
+        Name of the MLflow run.
+    log_model_dump : bool, optional
+        If True, the model dump is logged to MLflow.
+    save_jit : bool, optional
+        If True, the model is saved as a JIT model when calling model.dump, if log_model_dump=True.
+    **kwargs
+        Additional arguments for mlflow.pyfunc.log_model.
 
-    Returns:
-        Model info metadata, mlflow.models.model.ModelInfo.
+    Returns
+    -------
+    mlflow.models.model.ModelInfo
+        Model info metadata.
+
+    Raises
+    ------
+    ImportError
+        If MLflow is not installed.
+
     """
     if not HAS_MLFLOW:
         logger.error("MLflow is not installed - cannot register model")
@@ -190,11 +209,11 @@ def create_mlflow_model(model) -> Any:
 if HAS_MLFLOW:
 
     class PyFuncModel(mlflow.pyfunc.PythonModel):
-        """
-        Custom MLflow model class for LUMETorch.
-        Uses Pyfunc to define a model that can be saved and loaded with MLflow.
+        """Custom MLflow model class for LUMETorch.
 
+        Uses Pyfunc to define a model that can be saved and loaded with MLflow.
         Must implement the `predict` method.
+
         """
 
         # Disable type hint validation for the predict method to avoid annoying warnings
@@ -205,7 +224,19 @@ if HAS_MLFLOW:
             self.model = model
 
         def predict(self, model_input):
-            """Evaluate the model with the given input."""
+            """Evaluate the model with the given input.
+
+            Parameters
+            ----------
+            model_input : dict
+                Input dictionary for model evaluation.
+
+            Returns
+            -------
+            dict
+                Model evaluation results.
+
+            """
             return self.model.evaluate(model_input)
 
         def save_model(self):

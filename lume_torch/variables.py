@@ -27,8 +27,11 @@ __all__ = [
 class DistributionVariable(Variable):
     """Variable for distributions. Must be a subclass of torch.distributions.Distribution.
 
-    Attributes:
-        unit: Unit associated with the variable.
+    Attributes
+    ----------
+    unit : str, optional
+        Unit associated with the variable.
+
     """
 
     unit: Optional[str] = None
@@ -38,16 +41,21 @@ class DistributionVariable(Variable):
         return "none"
 
     def validate_value(self, value: TDistribution, config: ConfigEnum = None):
-        """
-        Validates the given value.
+        """Validates the given value.
 
-        Args:
-            value (Distribution): The value to be validated.
-            config (ConfigEnum, optional): The configuration for validation. Defaults to None.
-              Allowed values are "none", "warn", and "error".
+        Parameters
+        ----------
+        value : Distribution
+            The value to be validated.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error".
 
-        Raises:
-            TypeError: If the value is not an instance of Distribution.
+        Raises
+        ------
+        TypeError
+            If the value is not an instance of Distribution.
+
         """
         _config = self.default_validation_config if config is None else config
         # mandatory validation
@@ -68,11 +76,16 @@ class DistributionVariable(Variable):
 def get_variable(name: str) -> Type[Variable]:
     """Returns the Variable subclass with the given name.
 
-    Args:
-        name: Name of the Variable subclass.
+    Parameters
+    ----------
+    name : str
+        Name of the Variable subclass.
 
-    Returns:
+    Returns
+    -------
+    Type[Variable]
         Variable subclass with the given name.
+
     """
     classes = [ScalarVariable, DistributionVariable]
     class_lookup = {c.__name__: c for c in classes}

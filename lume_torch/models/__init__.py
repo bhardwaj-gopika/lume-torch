@@ -17,13 +17,23 @@ except ModuleNotFoundError:
 
 
 def get_model(name: str):
-    """Returns the LUME model class for the given name.
+    """Return the LUME model class for the given name.
 
-    Args:
-        name: Name of LUME model class.
+    Parameters
+    ----------
+    name : str
+        Name of the LUME model class.
 
-    Returns:
-        LUME model class for the given name.
+    Returns
+    -------
+    type
+        LUME model class corresponding to ``name``.
+
+    Raises
+    ------
+    KeyError
+        If no registered model with the given name exists.
+
     """
     model_lookup = {m.__name__: m for m in registered_models}
     if name not in model_lookup.keys():
@@ -34,13 +44,19 @@ def get_model(name: str):
 
 
 def model_from_yaml(yaml_str: Union[str, os.PathLike]):
-    """Creates LUME model from the given YAML formatted string or file path.
+    """Create a LUME model from a YAML string or file path.
 
-    Args:
-        yaml_str: YAML formatted string or file path.
+    Parameters
+    ----------
+    yaml_str : str or os.PathLike
+        YAML formatted string or path to a YAML file defining the model
+        configuration.
 
-    Returns:
-        Created LUME model.
+    Returns
+    -------
+    LUMEBaseModel
+        Instantiated LUME model defined by the YAML configuration.
+
     """
     if os.path.exists(yaml_str):
         with open(yaml_str) as f:
