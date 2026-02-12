@@ -1,8 +1,11 @@
+import logging
 from typing import Union, Dict
 
 from pydantic import BaseModel, ConfigDict
 import torch
 from torch.distributions import Distribution
+
+logger = logging.getLogger(__name__)
 
 
 def itemize_dict(
@@ -10,11 +13,16 @@ def itemize_dict(
 ) -> list[dict[str, Union[float, torch.Tensor]]]:
     """Itemizes the given in-/output dictionary.
 
-    Args:
-        d: Dictionary to itemize.
+    Parameters
+    ----------
+    d : dict of str to float, torch.Tensor, or Distribution
+        Dictionary to itemize.
 
-    Returns:
+    Returns
+    -------
+    list of dict
         List of in-/output dictionaries, each containing only a single value per in-/output.
+
     """
     has_tensors = any([isinstance(value, torch.Tensor) for value in d.values()])
     itemized_dicts = []
@@ -35,11 +43,16 @@ def format_inputs(
 ) -> dict[str, torch.Tensor]:
     """Formats values of the input dictionary as tensors.
 
-    Args:
-        input_dict: Dictionary of input variable names to values.
+    Parameters
+    ----------
+    input_dict : dict of str to float or torch.Tensor
+        Dictionary of input variable names to values.
 
-    Returns:
+    Returns
+    -------
+    dict of str to torch.Tensor
         Dictionary of input variable names to tensors.
+
     """
     formatted_inputs = {}
     for var_name, value in input_dict.items():
@@ -51,8 +64,11 @@ def format_inputs(
 class InputDictModel(BaseModel):
     """Pydantic model for input dictionary validation.
 
-    Attributes:
-        input_dict: Input dictionary to validate.
+    Attributes
+    ----------
+    input_dict : dict of str to torch.Tensor or float
+        Input dictionary to validate.
+
     """
 
     input_dict: Dict[str, Union[torch.Tensor, float]]

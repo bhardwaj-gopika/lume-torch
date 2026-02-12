@@ -7,30 +7,56 @@ import torch
 from pydantic import field_validator
 from botorch.models.transforms.input import ReversibleInputTransform
 
-from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable
-from lume_model.models.utils import itemize_dict, format_inputs, InputDictModel
+from lume_torch.base import LUMETorch
+from lume_torch.variables import ScalarVariable
+from lume_torch.models.utils import itemize_dict, format_inputs, InputDictModel
 
 logger = logging.getLogger(__name__)
 
 
-class TorchModel(LUMEBaseModel):
+class TorchModel(LUMETorch):
     """LUME-model class for torch models.
 
-    By default, the models are assumed to be fixed, so all gradient computation is deactivated and the model and
-    transformers are put in evaluation mode.
+    By default, the models are assumed to be fixed, so all gradient computation
+    is deactivated and the model and transformers are put in evaluation mode.
 
-    Attributes:
-        model: The torch base model.
-        input_variables: List defining the input variables and their order.
-        output_variables: List defining the output variables and their order.
-        input_transformers: List of transformer objects to apply to input before passing to model.
-        output_transformers: List of transformer objects to apply to output of model.
-        output_format: Determines format of outputs: "tensor" or "raw".
-        device: Device on which the model will be evaluated. Defaults to "cpu".
-        fixed_model: If true, the model and transformers are put in evaluation mode and all gradient
-          computation is deactivated.
-        precision: Precision of the model, either "double" or "single".
+    Attributes
+    ----------
+    model : torch.nn.Module
+        The underlying torch model.
+    input_variables : list of ScalarVariable
+        List defining the input variables and their order.
+    output_variables : list of ScalarVariable
+        List defining the output variables and their order.
+    input_transformers : list of callable or modules
+        Transformer objects applied to the inputs before passing to the model.
+    output_transformers : list of callable or modules
+        Transformer objects applied to the outputs of the model.
+    output_format : {"tensor", "variable", "raw"}
+        Determines format of outputs.
+    device : torch.device or str
+        Device on which the model will be evaluated. Defaults to ``"cpu"``.
+    fixed_model : bool
+        If ``True``, the model and transformers are put in evaluation mode and
+        all gradient computation is deactivated.
+    precision : {"double", "single"}
+        Precision of the model, either ``"double"`` or ``"single"``.
+
+    Methods
+    -------
+    evaluate(input_dict, **kwargs)
+        Evaluate the model on a dictionary of inputs and return outputs.
+    input_validation(input_dict)
+        Validate and normalize the input dictionary before evaluation.
+    output_validation(output_dict)
+        Validate the output dictionary after evaluation.
+    random_input(n_samples=1)
+        Generate random inputs consistent with the input variable ranges.
+    random_evaluate(n_samples=1)
+        Evaluate the model on random inputs.
+    to(device)
+        Move the model, transformers, and default values to a given device.
+
     """
 
     model: torch.nn.Module
@@ -48,10 +74,14 @@ class TorchModel(LUMEBaseModel):
     def __init__(self, *args, **kwargs):
         """Initializes TorchModel.
 
-        Args:
-            *args: Accepts a single argument which is the model configuration as dictionary, YAML or JSON
-              formatted string or file path.
-            **kwargs: See class attributes.
+        Parameters
+        ----------
+        *args : dict, str, or Path
+            Accepts a single argument which is the model configuration as dictionary, YAML or JSON
+            formatted string or file path.
+        **kwargs
+            See class attributes.
+
         """
         super().__init__(*args, **kwargs)
         self.input_transformers = (
@@ -100,11 +130,12 @@ class TorchModel(LUMEBaseModel):
                 fname = v
                 try:
                     v = torch.jit.load(v)
-                    print(f"Loaded TorchScript (JIT) model from file: {fname}")
+                    logger.info(f"Loaded TorchScript (JIT) model from file: {fname}")
                 except RuntimeError:
                     v = torch.load(v, weights_only=False)
-                    print(f"Loaded PyTorch model from file: {fname}")
+                    logger.info(f"Loaded PyTorch model from file: {fname}")
             else:
+                logger.error(f"File {v} not found")
                 raise OSError(f"File {v} is not found.")
         return v
 
@@ -113,6 +144,9 @@ class TorchModel(LUMEBaseModel):
         """Verifies that input variables have the required default values."""
         for var in value:
             if var.default_value is None:
+                logger.error(
+                    f"Input variable {var.name} is missing required default value"
+                )
                 raise ValueError(
                     f"Input variable {var.name} must have a default value."
                 )
@@ -121,13 +155,16 @@ class TorchModel(LUMEBaseModel):
     @field_validator("input_transformers", "output_transformers", mode="before")
     def validate_transformers(cls, v):
         if not isinstance(v, list):
+            logger.error(f"Transformers must be a list, got {type(v)}")
             raise ValueError("Transformers must be passed as list.")
         loaded_transformers = []
         for t in v:
             if isinstance(t, (str, os.PathLike)):
                 if os.path.exists(t):
                     t = torch.load(t, weights_only=False)
+                    logger.debug(f"Loaded transformer from file: {t}")
                 else:
+                    logger.error(f"Transformer file {t} not found")
                     raise OSError(f"File {t} is not found.")
             loaded_transformers.append(t)
         v = loaded_transformers
@@ -137,6 +174,9 @@ class TorchModel(LUMEBaseModel):
     def validate_output_format(cls, v):
         supported_formats = ["tensor", "variable", "raw"]
         if v not in supported_formats:
+            logger.error(
+                f"Invalid output format {v}, expected one of {supported_formats}"
+            )
             raise ValueError(
                 f"Unknown output format {v}, expected one of {supported_formats}."
             )
@@ -153,13 +193,18 @@ class TorchModel(LUMEBaseModel):
         self,
         input_dict: dict[str, Union[float, torch.Tensor]],
     ) -> dict[str, Union[float, torch.Tensor]]:
-        """Evaluates model on the given input dictionary.
+        """Evaluate the model on the given input dictionary.
 
-        Args:
-            input_dict: Input dictionary on which to evaluate the model.
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Input dictionary on which to evaluate the model.
 
-        Returns:
+        Returns
+        -------
+        dict of str to float or torch.Tensor
             Dictionary of output variable names to values.
+
         """
         formatted_inputs = format_inputs(input_dict)
         input_tensor = self._arrange_inputs(formatted_inputs)
@@ -171,13 +216,18 @@ class TorchModel(LUMEBaseModel):
         return output_dict
 
     def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
-        """Validates input dictionary before evaluation.
+        """Validate the input dictionary before evaluation.
 
-        Args:
-            input_dict: Input dictionary to validate.
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Input dictionary to validate.
 
-        Returns:
+        Returns
+        -------
+        dict of str to float or torch.Tensor
             Validated input dictionary.
+
         """
         # validate input type (ints only are cast to floats for scalars)
         validated_input = InputDictModel(input_dict=input_dict).input_dict
@@ -205,7 +255,14 @@ class TorchModel(LUMEBaseModel):
         return validated_input
 
     def output_validation(self, output_dict: dict[str, Union[float, torch.Tensor]]):
-        """Itemizes tensors before performing output validation."""
+        """Itemize tensors before performing output validation.
+
+        Parameters
+        ----------
+        output_dict : dict of str to float or torch.Tensor
+            Output dictionary to validate.
+
+        """
         itemized_outputs = itemize_dict(output_dict)
         for ele in itemized_outputs:
             super().output_validation(ele)
@@ -213,11 +270,16 @@ class TorchModel(LUMEBaseModel):
     def random_input(self, n_samples: int = 1) -> dict[str, torch.Tensor]:
         """Generates random input(s) for the model.
 
-        Args:
-            n_samples: Number of random samples to generate.
+        Parameters
+        ----------
+        n_samples : int, optional
+            Number of random samples to generate.
 
-        Returns:
+        Returns
+        -------
+        dict of str to torch.Tensor
             Dictionary of input variable names to tensors.
+
         """
         input_dict = {}
         for var in self.input_variables:
@@ -232,22 +294,30 @@ class TorchModel(LUMEBaseModel):
     def random_evaluate(
         self, n_samples: int = 1
     ) -> dict[str, Union[float, torch.Tensor]]:
-        """Returns random evaluation(s) of the model.
+        """Return random evaluations of the model.
 
-        Args:
-            n_samples: Number of random samples to evaluate.
+        Parameters
+        ----------
+        n_samples : int, optional
+            Number of random samples to evaluate.
 
-        Returns:
+        Returns
+        -------
+        dict of str to float or torch.Tensor
             Dictionary of variable names to outputs.
+
         """
         random_input = self.random_input(n_samples)
         return self.evaluate(random_input)
 
     def to(self, device: Union[torch.device, str]):
-        """Updates the device for the model, transformers and default values.
+        """Update the device for the model, transformers and default values.
 
-        Args:
-            device: Device on which the model will be evaluated.
+        Parameters
+        ----------
+        device : torch.device or str
+            Device on which the model will be evaluated.
+
         """
         self.model.to(device)
         for t in self.input_transformers + self.output_transformers:
@@ -258,11 +328,16 @@ class TorchModel(LUMEBaseModel):
     def insert_input_transformer(
         self, new_transformer: ReversibleInputTransform, loc: int
     ):
-        """Inserts an additional input transformer at the given location.
+        """Insert an additional input transformer at the given location.
 
-        Args:
-            new_transformer: New transformer to add.
-            loc: Location where the new transformer shall be added to the transformer list.
+        Parameters
+        ----------
+        new_transformer : ReversibleInputTransform
+            New transformer to add.
+        loc : int
+            Location where the new transformer shall be added to the
+            transformer list.
+
         """
         self.input_transformers = (
             self.input_transformers[:loc]
@@ -275,9 +350,13 @@ class TorchModel(LUMEBaseModel):
     ):
         """Inserts an additional output transformer at the given location.
 
-        Args:
-            new_transformer: New transformer to add.
-            loc: Location where the new transformer shall be added to the transformer list.
+        Parameters
+        ----------
+        new_transformer : ReversibleInputTransform
+            New transformer to add.
+        loc : int
+            Location where the new transformer shall be added to the transformer list.
+
         """
         self.output_transformers = (
             self.output_transformers[:loc]
@@ -288,16 +367,22 @@ class TorchModel(LUMEBaseModel):
     def update_input_variables_to_transformer(
         self, transformer_loc: int
     ) -> list[ScalarVariable]:
-        """Returns input variables updated to the transformer at the given location.
+        """Return input variables updated to the transformer at the given location.
 
-        Updated are the value ranges and default of the input variables. This allows, e.g., to add a
-        calibration transformer and to update the input variable specification accordingly.
+        Updated are the value ranges and defaults of the input variables. This
+        allows, for example, adding a calibration transformer and updating the
+        input variable specification accordingly.
 
-        Args:
-            transformer_loc: The location of the input transformer to adjust for.
+        Parameters
+        ----------
+        transformer_loc : int
+            Index of the input transformer to adjust for.
 
-        Returns:
+        Returns
+        -------
+        list of ScalarVariable
             The updated input variables.
+
         """
         x_old = {
             "min": torch.tensor(
@@ -363,13 +448,19 @@ class TorchModel(LUMEBaseModel):
     def _fill_default_inputs(
         self, input_dict: dict[str, torch.Tensor]
     ) -> dict[str, torch.Tensor]:
-        """Fills missing input variables with default values.
+        """Fill missing input variables with default values.
 
-        Args:
-            input_dict: Dictionary of input variable names to tensors.
+        Parameters
+        ----------
+        input_dict : dict of str to torch.Tensor
+            Dictionary of input variable names to tensors.
 
-        Returns:
-            Dictionary of input variable names to tensors with default values for missing inputs.
+        Returns
+        -------
+        dict of str to torch.Tensor
+            Dictionary of input variable names to tensors with default values
+            for missing inputs.
+
         """
         for var in self.input_variables:
             if var.name not in input_dict.keys():
@@ -379,16 +470,22 @@ class TorchModel(LUMEBaseModel):
     def _arrange_inputs(
         self, formatted_inputs: dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Enforces order of input variables.
+        """Enforce the order of input variables.
 
-        Enforces the order of the input variables to be passed to the transformers and model and updates the
-        returned tensor with default values for any inputs that are missing.
+        Enforces the order of the input variables to be passed to the
+        transformers and model and updates the returned tensor with default
+        values for any inputs that are missing.
 
-        Args:
-            formatted_inputs: Dictionary of input variable names to tensors.
+        Parameters
+        ----------
+        formatted_inputs : dict of str to torch.Tensor
+            Dictionary of input variable names to tensors.
 
-        Returns:
+        Returns
+        -------
+        torch.Tensor
             Ordered input tensor to be passed to the transformers.
+
         """
         default_tensor = torch.tensor(
             [var.default_value for var in self.input_variables], **self._tkwargs
@@ -415,11 +512,16 @@ class TorchModel(LUMEBaseModel):
     def _transform_inputs(self, input_tensor: torch.Tensor) -> torch.Tensor:
         """Applies transformations to the inputs.
 
-        Args:
-            input_tensor: Ordered input tensor to be passed to the transformers.
+        Parameters
+        ----------
+        input_tensor : torch.Tensor
+            Ordered input tensor to be passed to the transformers.
 
-        Returns:
+        Returns
+        -------
+        torch.Tensor
             Tensor of transformed inputs to be passed to the model.
+
         """
         # Make at least 2D
         if input_tensor.ndim == 0:
@@ -435,13 +537,18 @@ class TorchModel(LUMEBaseModel):
         return input_tensor
 
     def _transform_outputs(self, output_tensor: torch.Tensor) -> torch.Tensor:
-        """(Un-)Transforms the model output tensor.
+        """(Un-)transform the model output tensor.
 
-        Args:
-            output_tensor: Output tensor from the model.
+        Parameters
+        ----------
+        output_tensor : torch.Tensor
+            Output tensor from the model.
 
-        Returns:
-            (Un-)Transformed output tensor.
+        Returns
+        -------
+        torch.Tensor
+            (Un-)transformed output tensor.
+
         """
         for transformer in self.output_transformers:
             if isinstance(transformer, ReversibleInputTransform):
@@ -455,13 +562,18 @@ class TorchModel(LUMEBaseModel):
         return output_tensor
 
     def _parse_outputs(self, output_tensor: torch.Tensor) -> dict[str, torch.Tensor]:
-        """Constructs dictionary from model output tensor.
+        """Construct a dictionary from the model output tensor.
 
-        Args:
-            output_tensor: (Un-)transformed output tensor from the model.
+        Parameters
+        ----------
+        output_tensor : torch.Tensor
+            (Un-)transformed output tensor from the model.
 
-        Returns:
+        Returns
+        -------
+        dict of str to torch.Tensor
             Dictionary of output variable names to (un-)transformed tensors.
+
         """
         parsed_outputs = {}
         if output_tensor.dim() in [0, 1]:
@@ -477,15 +589,22 @@ class TorchModel(LUMEBaseModel):
         self,
         parsed_outputs: dict[str, torch.Tensor],
     ) -> dict[str, Union[float, torch.Tensor]]:
-        """Updates and returns outputs according to output_format.
+        """Update and return outputs according to ``output_format``.
 
-        Updates the output variables within the model to reflect the new values.
+        Updates the output variables within the model to reflect the new
+        values.
 
-        Args:
-            parsed_outputs: Dictionary of output variable names to transformed tensors.
+        Parameters
+        ----------
+        parsed_outputs : dict of str to torch.Tensor
+            Dictionary of output variable names to transformed tensors.
 
-        Returns:
-            Dictionary of output variable names to values depending on output_format.
+        Returns
+        -------
+        dict of str to float or torch.Tensor
+            Dictionary of output variable names to values depending on
+            ``output_format``.
+
         """
         if self.output_format.lower() == "tensor":
             return parsed_outputs

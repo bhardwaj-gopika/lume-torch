@@ -1,14 +1,17 @@
 import os
 import json
 import yaml
+import logging
 import inspect
 from typing import Union, Any
 
 import torch
 
-from lume_model.base import parse_config, recursive_serialize
-from lume_model.models.torch_model import TorchModel
-from lume_model.mlflow_utils import register_model
+from lume_torch.base import parse_config, recursive_serialize
+from lume_torch.models.torch_model import TorchModel
+from lume_torch.mlflow_utils import register_model
+
+logger = logging.getLogger(__name__)
 
 
 class TorchModule(torch.nn.Module):
@@ -16,6 +19,7 @@ class TorchModule(torch.nn.Module):
 
     As the base model within the TorchModel is assumed to be fixed during instantiation,
     so is the TorchModule.
+
     """
 
     def __init__(
@@ -27,46 +31,66 @@ class TorchModule(torch.nn.Module):
     ):
         """Initializes TorchModule.
 
-        Args:
-            *args: Accepts a single argument which is the model configuration as dictionary, YAML or JSON
-              formatted string or file path.
+        Parameters
+        ----------
+        *args : dict, str, or Path
+            Accepts a single argument which is the model configuration as dictionary, YAML or JSON
+            formatted string or file path.
+        model : TorchModel, optional
+            The TorchModel instance to wrap around. If config is None, this has to be defined.
+        input_order : list of str, optional
+            Input names in the order they are passed to the model. If None, the input order of the
+            TorchModel is used.
+        output_order : list of str, optional
+            Output names in the order they are returned by the model. If None, the output order of
+            the TorchModel is used.
 
-        Keyword Args:
-            model: The TorchModel instance to wrap around. If config is None, this has to be defined.
-            input_order: Input names in the order they are passed to the model. If None, the input order of the
-              TorchModel is used.
-            output_order: Output names in the order they are returned by the model. If None, the output order of
-              the TorchModel is used.
         """
         if all(arg is None for arg in [*args, model]):
+            logger.error("TorchModule requires either a YAML config or model argument")
             raise ValueError(
                 "Either a YAML string has to be given or model has to be defined."
             )
         super().__init__()
         if len(args) == 1:
             if not all(v is None for v in [model, input_order, output_order]):
+                logger.error(
+                    "Cannot specify both YAML config and keyword arguments for TorchModule"
+                )
                 raise ValueError(
                     "Cannot specify YAML string and keyword arguments for TorchModule init."
                 )
+            logger.debug("Initializing TorchModule from configuration file")
             model_fields = {f"model.{k}": v for k, v in TorchModel.model_fields.items()}
             kwargs = parse_config(args[0], model_fields)
             kwargs["model"] = TorchModel(kwargs["model"])
             self.__init__(**kwargs)
         elif len(args) > 1:
+            logger.error(f"Too many positional arguments to TorchModule: {len(args)}")
             raise ValueError(
                 "Arguments to TorchModule must be either a single YAML string or keyword arguments."
             )
         else:
+            logger.debug(f"Initializing TorchModule with model: {type(model).__name__}")
             self._model = model
             self._input_order = input_order
             self._output_order = output_order
             self.register_module("base_model", self._model.model)
+            logger.debug(
+                f"Registered {len(self._model.input_transformers)} input transformers"
+            )
             for i, input_transformer in enumerate(self._model.input_transformers):
                 self.register_module(f"input_transformers_{i}", input_transformer)
+            logger.debug(
+                f"Registered {len(self._model.output_transformers)} output transformers"
+            )
             for i, output_transformer in enumerate(self._model.output_transformers):
                 self.register_module(f"output_transformers_{i}", output_transformer)
             if not model.model.training:  # TorchModel defines train/eval mode
                 self.eval()
+            logger.info(
+                f"Initialized TorchModule with {len(self.input_order)} inputs and {len(self.output_order)} outputs"
+            )
 
     @property
     def model(self):
@@ -105,14 +129,22 @@ class TorchModule(torch.nn.Module):
     ) -> str:
         """Serializes the object and returns a YAML formatted string defining the TorchModule instance.
 
-        Args:
-            base_key: Base key for serialization.
-            file_prefix: Prefix for generated filenames.
-            save_models: Determines whether models are saved to file.
-            save_jit: Determines whether the structure of the model is saved as TorchScript
+        Parameters
+        ----------
+        base_key : str, optional
+            Base key for serialization.
+        file_prefix : str, optional
+            Prefix for generated filenames.
+        save_models : bool, optional
+            Determines whether models are saved to file.
+        save_jit : bool, optional
+            Determines whether the structure of the model is saved as TorchScript
 
-        Returns:
+        Returns
+        -------
+        str
             YAML formatted string defining the TorchModule instance.
+
         """
         d = {}
         for k, v in inspect.signature(TorchModule.__init__).parameters.items():
@@ -149,12 +181,23 @@ class TorchModule(torch.nn.Module):
     ):
         """Returns and optionally saves YAML formatted string defining the model.
 
-        Args:
-            file: File path to which the YAML formatted string and corresponding files are saved.
-            base_key: Base key for serialization.
-            save_models: Determines whether models are saved to file.
-            save_jit : Whether the model is saved using just in time pytorch method
+        Parameters
+        ----------
+        file : str or Path
+            File path to which the YAML formatted string and corresponding files are saved.
+        save_models : bool, optional
+            Determines whether models are saved to file.
+        base_key : str, optional
+            Base key for serialization.
+        save_jit : bool, optional
+            Whether the model is saved using just in time pytorch method
+
         """
+        logger.info(f"Dumping TorchModule configuration to: {file}")
+        if save_models:
+            logger.debug("Saving model files alongside configuration")
+        if save_jit:
+            logger.debug("Saving TorchModule as TorchScript (JIT)")
         file_prefix = os.path.splitext(file)[0]
         with open(file, "w") as f:
             f.write(
@@ -167,11 +210,35 @@ class TorchModule(torch.nn.Module):
             )
 
     def evaluate_model(self, x: dict[str, torch.Tensor]):
-        """Placeholder method to modify model calls."""
+        """Placeholder method to modify model calls.
+
+        Parameters
+        ----------
+        x : dict of str to torch.Tensor
+            Input dictionary to evaluate.
+
+        Returns
+        -------
+        dict of str to torch.Tensor
+            Model evaluation results.
+
+        """
         return self._model.evaluate(x)
 
     def manipulate_output(self, y_model: dict[str, torch.Tensor]):
-        """Placeholder method to modify the model output."""
+        """Placeholder method to modify the model output.
+
+        Parameters
+        ----------
+        y_model : dict of str to torch.Tensor
+            Model output dictionary.
+
+        Returns
+        -------
+        dict of str to torch.Tensor
+            Modified model output.
+
+        """
         return y_model
 
     def _tensor_to_dictionary(self, x: torch.Tensor):
@@ -190,6 +257,9 @@ class TorchModule(torch.nn.Module):
     @staticmethod
     def _validate_input(x: torch.Tensor) -> torch.Tensor:
         if x.dim() <= 1:
+            logger.error(
+                f"Invalid input dimensions: expected at least 2D ([n_samples, n_features]), got {tuple(x.shape)}"
+            )
             raise ValueError(
                 f"Expected input dim to be at least 2 ([n_samples, n_features]), received: {tuple(x.shape)}"
             )
@@ -208,28 +278,41 @@ class TorchModule(torch.nn.Module):
         save_jit: bool = False,
         **kwargs,
     ):
-        """
-        Registers the model to MLflow if mlflow is installed. Each time this function is called, a new version
-        of the model is created. The model is saved to the tracking server or local directory, depending on the
-        MLFLOW_TRACKING_URI.
+        """Registers the model to MLflow if mlflow is installed.
+
+        Each time this function is called, a new version of the model is created. The model is saved to the
+        tracking server or local directory, depending on the MLFLOW_TRACKING_URI.
 
         If no tracking server is set up, data and artifacts are saved directly under your current directory. To set up
         a tracking server, set the environment variable MLFLOW_TRACKING_URI, e.g. a local port/path. See
         https://mlflow.org/docs/latest/getting-started/intro-quickstart/ for more info.
 
-        Args:
-            artifact_path: Path to store the model in MLflow.
-            registered_model_name: Name of the registered model in MLflow. Optional.
-            tags: Tags to add to the MLflow model. Optional.
-            version_tags: Tags to add to this MLflow model version. Optional.
-            alias: Alias to add to this MLflow model version. Optional.
-            run_name: Name of the MLflow run. Optional.
-            log_model_dump: Whether to log the model dump files as artifacts. Optional.
-            save_jit: Whether to save the model as TorchScript when calling model.dump, if log_model_dump=True. Optional.
-            **kwargs: Additional arguments for mlflow.pyfunc.log_model.
+        Parameters
+        ----------
+        artifact_path : str
+            Path to store the model in MLflow.
+        registered_model_name : str or None, optional
+            Name of the registered model in MLflow.
+        tags : dict of str to Any or None, optional
+            Tags to add to the MLflow model.
+        version_tags : dict of str to Any or None, optional
+            Tags to add to this MLflow model version.
+        alias : str or None, optional
+            Alias to add to this MLflow model version.
+        run_name : str or None, optional
+            Name of the MLflow run.
+        log_model_dump : bool, optional
+            Whether to log the model dump files as artifacts.
+        save_jit : bool, optional
+            Whether to save the model as TorchScript when calling model.dump, if log_model_dump=True.
+        **kwargs
+            Additional arguments for mlflow.pyfunc.log_model.
 
-        Returns:
-            Model info metadata, mlflow.models.model.ModelInfo.
+        Returns
+        -------
+        mlflow.models.model.ModelInfo
+            Model info metadata.
+
         """
         return register_model(
             self,
@@ -246,42 +329,58 @@ class TorchModule(torch.nn.Module):
 
 
 class FixedVariableModel(torch.nn.Module):
-    """
-    Prior model for Bayesian optimization.
-    This module wraps a LUME model and manages the seperation between control variables
+    """Prior model for Bayesian optimization.
+
+    This module wraps a LUME model and manages the separation between control variables
     and fixed variables (measured from the machine). It also maintains
     an efficient buffer of fixed variables that is updated periodically.
     The prior model is used as a mean function in Gaussian process models to incorporate
     physics knowledge from the LUME surrogate model into the Bayesian optimization process.
 
-    Args:
-        model (TorchModule): LUME model that takes all input variables and produces outputs.
-            The model's input order is obtained via model.input_variables.
-        fixed_values (dict): Dictionary mapping PV names to their initial measured values
-            for all non-control variables. Keys should be PV names (str), values should be
-            floats. These represent the initial state of variables not being optimized.
+    Parameters
+    ----------
+    model : TorchModule
+        LUME model that takes all input variables and produces outputs.
+        The model's input order is obtained via model.input_variables.
+    fixed_values : dict
+        Dictionary mapping PV names to their initial measured values
+        for all non-control variables. Keys should be PV names (str), values should be
+        floats. These represent the initial state of variables not being optimized.
 
-    Attributes:
-        model (TorchModule): The LUME surrogate model.
-        all_inputs (list): Ordered list of all input variable names from the LUME model.
-        control_variables (list): List of control variable names, derived as
-            all_inputs - fixed_values.
-        input_buffer (torch.Tensor): 1D tensor storing the current values of all inputs.
-            Shape: (n_total_inputs,). This is updated when fixed variables change.
-        control_indices (torch.Tensor): 1D tensor of indices for control variables in the
-            full input tensor. Shape: (n_control_vars,). Used for fast indexing.
-        fixed_indices (list): List of indices for fixed variables in the full input tensor.
+    Attributes
+    ----------
+    model : TorchModule
+        The LUME surrogate model.
+    all_inputs : list
+        Ordered list of all input variable names from the LUME model.
+    control_variables : list
+        List of control variable names, derived as all_inputs - fixed_values.
+    input_buffer : torch.Tensor
+        1D tensor storing the current values of all inputs.
+        Shape: (n_total_inputs,). This is updated when fixed variables change.
+    control_indices : torch.Tensor
+        1D tensor of indices for control variables in the full input tensor.
+        Shape: (n_control_vars,). Used for fast indexing.
+    fixed_indices : list
+        List of indices for fixed variables in the full input tensor.
+
     """
 
     def __init__(self, model: TorchModule, fixed_values):
-        """
-        Initialize the FixedVariableModel class.
-        This constructor steps up the model wrapper that separates control variables (to be optimized) from fixed variables (measured           from machine state). It creates an efficient buffer structure for fast forward passes during optimization.
+        """Initialize the FixedVariableModel class.
 
-        Args:
-            model (TorchModule): The LUME surrogate model
-            fixed_variables (Dict[str, float]): Dictionary mapping PV (process variable) names to their initial measured values
+        This constructor sets up the model wrapper that separates control variables (to be optimized) from fixed
+        variables (measured from machine state). It creates an efficient buffer structure for fast forward passes
+        during optimization.
+
+        Parameters
+        ----------
+        model : TorchModule
+            The LUME surrogate model
+        fixed_values : dict of str to float
+            Dictionary mapping PV (process variable) names to their initial measured values
             for all non-control variables
+
         """
         super(FixedVariableModel, self).__init__()
         self.model = model
@@ -308,44 +407,48 @@ class FixedVariableModel(torch.nn.Module):
         # Initialize buffer with fixed variables
         self.update_fixed_values(fixed_values)
 
-        print("FixedVariableModel initialized")
-        print(f"  Total inputs (from model): {len(self.all_inputs)}")
-        print(f"  Fixed variables: {len(self.fixed_indices)}")
-        print(f"  Control variables (derived): {len(self.control_variables)}")
-        print(f"  Control variables: {self.control_variables}")
-        print(f"  Control indices: {self.control_indices}")
+        logger.info("FixedVariableModel initialized")
+        logger.info(f"  Total inputs (from model): {len(self.all_inputs)}")
+        logger.info(f"  Fixed variables: {len(self.fixed_indices)}")
+        logger.info(f"  Control variables (derived): {len(self.control_variables)}")
+        logger.debug(f"  Control variables: {self.control_variables}")
+        logger.debug(f"  Control indices: {self.control_indices}")
 
     def update_fixed_values(self, fixed_values):
-        """
-        Update the buffer with new fixed variable values.
+        """Update the buffer with new fixed variable values.
 
         This method directly updates the input_buffer tensor with new values for
         fixed variables. It should be called when fixed variable measurements change.
 
-        Args:
-            fixed_values (dict): Dictionary mapping PV names to their new measured values.
-                Keys should be PV names (str) that exist in self.all_inputs and are NOT
-                control variables. Values should be floats.
+        Parameters
+        ----------
+        fixed_values : dict
+            Dictionary mapping PV names to their new measured values.
+            Keys should be PV names (str) that exist in self.all_inputs and are NOT
+            control variables. Values should be floats.
 
-        Returns:
-            None. Updates self.input_buffer in-place.
         """
+        logger.debug(f"Updating {len(fixed_values)} fixed variable values")
         for var_name, value in fixed_values.items():
             idx = self.all_inputs.index(var_name)
             self.input_buffer[idx] = value
 
     def forward(self, x) -> torch.Tensor:
-        """
-        Forward pass through the LUME model with control and fixed variables
+        """Forward pass through the LUME model with control and fixed variables.
 
-        Args:
-            x (torch.Tensor): Tensor containing only control variable values.
-                Can have arbitrary batch dimensions.
-                The last dimension must match len(self.control_variables).
+        Parameters
+        ----------
+        x : torch.Tensor
+            Tensor containing only control variable values.
+            Can have arbitrary batch dimensions.
+            The last dimension must match len(self.control_variables).
 
-        Returns:
-            torch.Tensor: Output from the LUME model. Shape depends on the model's
-                output structure and the input batch dimensions.
+        Returns
+        -------
+        torch.Tensor
+            Output from the LUME model. Shape depends on the model's
+            output structure and the input batch dimensions.
+
         """
         batch_shape = x.shape[
             :-1

@@ -1,41 +1,36 @@
-# LUME-model
+# LUME-Torch
 
-LUME-model holds data structures used in the LUME modeling toolset. Variables and models built using LUME-model will be compatible with other tools. LUME-model uses [pydantic](https://pydantic-docs.helpmanual.io/) models to enforce typed attributes upon instantiation.
+> **⚠️ Note:** This package was previously known as `lume-model`. It has been renamed to `lume-torch`. Documentation pages are currently being updated to reflect this change. Some references to `lume-model` may still appear in older documentation.
 
-## Requirements
+LUME-Torch is a LUME compatible wrapper for Torch based surrogate models. It provides a consistent API for defining
+surrogate models, variables, and configuration files, as well as utilities for loading and saving models.
+
+The TorchModel class allows users to easily wrap their trained PyTorch models for use in LUME applications,
+while the TorchModule class provides a PyTorch-compatible interface for seamless integration with other
+PyTorch-based tools and workflows.
+
+## Base Requirements
 
 * Python >= 3.10
 * pydantic
 * numpy
 * pyyaml
-* mlflow
+* botorch >= 0.15
+* lume-base
 
 ## Install
 
-LUME-model can be installed with conda using the command:
+LUME-torch can be installed with conda using the command:
 
-``` $ conda install lume-model -c conda-forge ```
+``` $ conda install lume-torch -c conda-forge ```
 
-or through pip (coming soon):
+or through pip:
 
-``` $ pip install lume-model ```
+``` $ pip install lume-torch ```
 
 ## Developer
 
-A development environment may be created using the packaged `dev-environment.yml` file.
-
-```
-conda env create -f dev-environment.yml
-```
-
-Install as editable:
-
-```
-conda activate lume-model-dev
-pip install --no-dependencies -e .
-```
-
-Or by creating a fresh environment and installing the package:
+Create a development environment and install the package in editable mode:
 
 ```
 pip install -e ".[dev]"
@@ -49,12 +44,16 @@ pre-commit install
 
 ## Variables
 
-The lume-model variables are intended to enforce requirements for input and output variables by variable type. For now, only scalar variables (floats) are supported.
+The lume-torch variables are intended to enforce requirements for input and output variables by variable type.
+
+### ScalarVariable
+
+LUME-torch uses `ScalarVariable` from the [lume-base](https://github.com/slaclab/lume-base) package for scalar floating-point values. Additionally, lume-torch provides a `DistributionVariable` class for PyTorch distributions.
 
 Minimal example of scalar input and output variables:
 
 ```python
-from lume_model.variables import ScalarVariable
+from lume_torch.variables import ScalarVariable
 
 input_variable = ScalarVariable(
     name="example_input",
@@ -64,14 +63,13 @@ input_variable = ScalarVariable(
 output_variable = ScalarVariable(name="example_output")
 ```
 
-All input variables may be made into constants by passing the
-`is_constant=True` keyword argument. These constant variables are always
-set to their default value and any other value assignments on
-them will raise an error message.
+All input variables may be made read-only by passing the
+`read_only=True` keyword argument. These read-only variables are validated
+to ensure their values match their default value during model execution.
 
 ## Models
 
-The lume-model base class `lume_model.base.LUMEBaseModel` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
+The lume-torch base class `lume_torch.base.LUMETorch` is intended to guide user development while allowing for flexibility and customizability. It is used to enforce LUME tool compatible classes for the execution of trained models.
 
 Requirements for model classes:
 
@@ -83,11 +81,11 @@ Requirements for model classes:
 Example model implementation and instantiation:
 
 ```python
-from lume_model.base import LUMEBaseModel
-from lume_model.variables import ScalarVariable
+from lume_torch.base import LUMETorch
+from lume_torch.variables import ScalarVariable
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,
@@ -97,8 +95,8 @@ class ExampleModel(LUMEBaseModel):
 
 
 input_variables = [
-    ScalarVariable(name="input1", default=0.1, value_range=[0.0, 1.0]),
-    ScalarVariable(name="input2", default=0.2, value_range=[0.0, 1.0]),
+    ScalarVariable(name="input1", default_value=0.1, value_range=[0.0, 1.0]),
+    ScalarVariable(name="input2", default_value=0.2, value_range=[0.0, 1.0]),
 ]
 output_variables = [
     ScalarVariable(name="output1"),
@@ -126,12 +124,12 @@ input_variables:
   input1:
     variable_class: ScalarVariable
     default_value: 0.1
-    is_constant: false
+    read_only: false
     value_range: [0.0, 1.0]
   input2:
     variable_class: ScalarVariable
     default_value: 0.2
-    is_constant: false
+    read_only: false
     value_range: [0.0, 1.0]
 output_variables:
   output1: {variable_class: ScalarVariable}
@@ -141,10 +139,10 @@ output_variables:
 and can be loaded by simply passing the file to the model constructor:
 
 ```python
-from lume_model.base import LUMEBaseModel
+from lume_torch.base import LUMETorch
 
 
-class ExampleModel(LUMEBaseModel):
+class ExampleModel(LUMETorch):
     def _evaluate(self, input_dict):
         output_dict = {
             "output1": input_dict[self.input_variables[0].name] ** 2,
@@ -156,7 +154,7 @@ class ExampleModel(LUMEBaseModel):
 m = ExampleModel("example_model.yml")
 ```
 
-## PyTorch Toolkit
+## TorchModel Usage
 
 A TorchModel can also be loaded from a YAML, specifying `TorchModel` in
 the `model_class` of the configuration file.
@@ -172,14 +170,6 @@ fixed_model: true
 In addition to the model_class, we also specify the path to the
 TorchModel's model and transformers (saved using `torch.save()`).
 
-The `output_format` specification indicates which form the outputs
-of the model's `evaluate()` function should take, which may vary
-depending on the application. TorchModel instances working with the
-[LUME-EPICS](https://github.com/slaclab/lume-epics) service will
-require an `OutputVariable` type, while [Xopt](https://github.
-com/xopt-org/Xopt) requires either a dictionary of float
-values or tensors as output.
-
 The variables and any transformers can also be added to the YAML
 configuration file:
 
@@ -190,17 +180,17 @@ input_variables:
     variable_class: ScalarVariable
     default_value: 0.1
     value_range: [0.0, 1.0]
-    is_constant: false
+    read_only: false
   input2:
     variable_class: ScalarVariable
     default_value: 0.2
     value_range: [0.0, 1.0]
-    is_constant: false
+    read_only: false
 output_variables:
   output:
     variable_class: ScalarVariable
     value_range: [-.inf, .inf]
-    is_constant: false
+    read_only: false
 input_validation_config: null
 output_validation_config: null
 model: model.pt
@@ -215,7 +205,7 @@ precision: double
 The TorchModel can then be loaded:
 
 ```python
-from lume_model.models.torch_model import TorchModel
+from lume_torch.models.torch_model import TorchModel
 
 # Load the model from a YAML file
 torch_model = TorchModel("path/to/model_config.yml")
@@ -257,12 +247,12 @@ model:
       variable_class: ScalarVariable
       default_value: 0.1
       value_range: [0.0, 1.0]
-      is_constant: false
+      read_only: false
     input2:
       variable_class: ScalarVariable
       default_value: 0.2
       value_range: [0.0, 1.0]
-      is_constant: false
+      read_only: false
   output_variables:
     output:
       variable_class: ScalarVariable
@@ -280,12 +270,8 @@ regular PyTorch model. You can pass tensor-type inputs to the model and
 get tensor-type outputs.
 
 ```python
-from torch import tensor
-from lume_model.models.torch_module import TorchModule
-
-
 # Example input tensor
-input_data = tensor([[0.1, 0.2]])
+input_data = torch.tensor([[0.1, 0.2]])
 
 # Evaluate the model
 output = torch_module(input_data)
@@ -298,3 +284,115 @@ print(output)
 The `TorchModule` class' dump method has the option to save as a scripted JIT model by passing `save_jit=True` when calling the dump method. This will save the model as a TorchScript model, which can be loaded and used without the need for the original model file.
 
 Note that saving as JIT through scripting has only been evaluated for NN models that don't depend on BoTorch modules.
+
+
+## Logging
+
+LUME-torch uses Python's standard `logging` module throughout the codebase to provide visibility into the library's operations. Logging configuration is left to the user application to allow maximum flexibility.
+
+### Configuring Logging
+
+To configure logging for your application using LUME-torch, set up the logging configuration in your application code:
+
+```python
+import logging
+
+# Basic configuration - logs to console
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# Now use lume-torch
+from lume_torch.models.torch_model import TorchModel
+torch_model = TorchModel("path/to/model_config.yml")
+```
+
+### Advanced Configuration
+
+For more control over logging output, you can configure specific loggers:
+
+```python
+import logging
+
+# Configure root logger
+logging.basicConfig(level=logging.WARNING)
+
+# Set specific log levels for lume-torch modules
+logging.getLogger('lume_torch').setLevel(logging.INFO)
+logging.getLogger('lume_torch.base').setLevel(logging.DEBUG)
+logging.getLogger('lume_torch.models').setLevel(logging.INFO)
+```
+
+### Log Level Guidelines
+
+LUME-torch follows standard Python logging practices with the following log levels:
+
+* **DEBUG**: Detailed diagnostic information useful for troubleshooting
+  - Module imports and initialization details
+  - Variable parsing and serialization steps
+  - Path resolution and file operations
+  - Input/output transformation details
+
+* **INFO**: General informational messages about normal operations
+  - Model loading and initialization
+  - File saving operations
+  - MLflow model registration
+  - Configuration file processing
+
+* **WARNING**: Warning messages for potentially problematic situations
+  - Deprecation warnings
+  - Missing optional configurations
+  - Fallback behaviors
+  - JIT compilation limitations
+
+* **ERROR**: Error messages logged before exceptions are raised
+  - Validation failures
+  - File not found errors
+  - Invalid configurations
+  - Type mismatches
+
+### Example: Production Logging Setup
+
+For production environments, you may want to log to a file with rotation:
+
+```python
+import logging
+from logging.handlers import RotatingFileHandler
+
+# Create formatters and handlers
+formatter = logging.Formatter(
+    '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+# File handler with rotation
+file_handler = RotatingFileHandler(
+    'lume_torch_app.log',
+    maxBytes=10485760,  # 10MB
+    backupCount=5
+)
+file_handler.setLevel(logging.INFO)
+file_handler.setFormatter(formatter)
+
+# Console handler for errors only
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.ERROR)
+console_handler.setFormatter(formatter)
+
+# Configure lume-torch logger
+lume_logger = logging.getLogger('lume_torch')
+lume_logger.setLevel(logging.INFO)
+lume_logger.addHandler(file_handler)
+lume_logger.addHandler(console_handler)
+```
+
+### Disabling Logging
+
+If you want to suppress all LUME-torch logging:
+
+```python
+import logging
+
+# Disable all lume-torch logging
+logging.getLogger('lume_torch').setLevel(logging.CRITICAL)
+```

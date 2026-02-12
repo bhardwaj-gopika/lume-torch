@@ -12,7 +12,7 @@ from botorch.models.transforms.outcome import OutcomeTransform
 from linear_operator.utils.cholesky import psd_safe_cholesky
 from linear_operator.operators import DiagLinearOperator
 
-from lume_model.models.prob_model_base import (
+from lume_torch.models.prob_model_base import (
     ProbModelBaseModel,
     TorchDistributionWrapper,
 )
@@ -22,24 +22,45 @@ logger = logging.getLogger(__name__)
 
 
 class GPModel(ProbModelBaseModel):
-    """
-    LUME-model class for GP models.
-    This supports Botorch's SingleTask, MultiTask, and ModelListGP models.
+    """LUME-model class for Gaussian process (GP) models.
 
-    If input_transformers or output_transformers lists are passed, they will be applied sequentially to the
-    inputs/outputs outside the underlying model, regardless of what the Botorch model's input_transform or
-    outcome_transform attributes are set to (those transformations will still be handled internally by the Botorch
-    model class). For ModelListGP, the passed input_transformers and output_transformers will be applied to all
-    models in the list (outside the underlying models). If different transformers are needed for different models,
-    the models should be instantiated separately using Botorch's input_transform and outcome_transform attributes
-    before creating the model list.
+    This class wraps BoTorch/GPyTorch GP models (``SingleTaskGP``, ``MultiTaskGP``,
+    or ``ModelListGP``) and exposes them through the LUME probabilistic model
+    interface.
 
-    Args:
-        model: A single task GPyTorch model or BoTorch model.
-        input_transformers: List of input transformers to apply to the input data. They will be applied sequentially
-            to the inputs. Optional, default is None.
-        output_transformers: List of output transformers to apply to the output data. They will be applied sequentially
-            to the outputs. Optional, default is None.
+    Parameters
+    ----------
+    model : SingleTaskGP, MultiTaskGP, or ModelListGP
+        A single-task or multi-task GP model, or a list of such models wrapped
+        in a :class:`ModelListGP`.
+    input_transformers : list of transforms, optional
+        List of input transformers to apply to the input data. They are applied
+        sequentially outside the underlying BoTorch model.
+    output_transformers : list of transforms, optional
+        List of output transformers to apply to the output data. They are
+        applied sequentially outside the underlying BoTorch model.
+
+    Methods
+    -------
+    get_input_size()
+        Return the dimensionality of the input space.
+    get_output_size()
+        Return the dimensionality of the output space.
+    likelihood()
+        Return the likelihood module of the underlying GP model.
+    mll(x, y)
+        Compute the marginal log-likelihood for given inputs and targets.
+    _get_predictions(input_dict, observation_noise=False)
+        Implement the probabilistic model interface by returning predictive
+        distributions for each output variable.
+
+    Notes
+    -----
+    If ``input_transformers`` or ``output_transformers`` are provided, they are
+    applied outside of the BoTorch model, regardless of any internal
+    ``input_transform`` or ``outcome_transform`` configured on the model
+    itself.
+
     """
 
     model: SingleTaskGP | MultiTaskGP | ModelListGP
@@ -62,28 +83,45 @@ class GPModel(ProbModelBaseModel):
     def validate_gp_model(cls, v):
         if isinstance(v, (str, os.PathLike)):
             if os.path.exists(v):
+                logger.info(f"Loading GP model from file: {v}")
                 v = torch.load(v, weights_only=False)
             else:
+                logger.error(f"GP model file not found: {v}")
                 raise OSError(f"File {v} is not found.")
         return v
 
     @field_validator("input_transformers", "output_transformers", mode="before")
     def validate_transformers(cls, v):
         if not isinstance(v, list):
+            logger.error(f"Transformers must be a list, got {type(v)}")
             raise ValueError("Transformers must be passed as list.")
         loaded_transformers = []
         for t in v:
             if isinstance(t, (str, os.PathLike)):
                 if os.path.exists(t):
+                    logger.debug(f"Loading transformer from file: {t}")
                     t = torch.load(t, weights_only=False)
                 else:
+                    logger.error(f"Transformer file not found: {t}")
                     raise OSError(f"File {t} is not found.")
             loaded_transformers.append(t)
         v = loaded_transformers
         return v
 
     def get_input_size(self) -> int:
-        """Get the dimensions of the input variables."""
+        """Get the dimensionality of the input space.
+
+        Returns
+        -------
+        int
+            Number of input features expected by the GP model.
+
+        Raises
+        ------
+        ValueError
+            If the underlying model type is not supported.
+
+        """
         if isinstance(self.model, SingleTaskGP):
             num_inputs = self.model.train_inputs[0].shape[-1]
         elif isinstance(self.model, MultiTaskGP):
@@ -94,13 +132,26 @@ class GPModel(ProbModelBaseModel):
             elif isinstance(self.model.models[0], MultiTaskGP):
                 num_inputs = self.model.models[0].train_inputs[0].shape[-1] - 1
         else:
+            logger.error(f"Unsupported GP model type: {type(self.model)}")
             raise ValueError(
                 "Model must be an instance of SingleTaskGP, MultiTaskGP or ModelListGP."
             )
         return num_inputs
 
     def get_output_size(self) -> int:
-        """Get the dimensions of the output variables."""
+        """Get the dimensionality of the output space.
+
+        Returns
+        -------
+        int
+            Number of output dimensions produced by the GP model.
+
+        Raises
+        ------
+        ValueError
+            If the underlying model type is not supported.
+
+        """
         if isinstance(self.model, ModelListGP):
             num_outputs = sum(model.num_outputs for model in self.model.models)
         elif isinstance(self.model, SingleTaskGP) or isinstance(
@@ -115,15 +166,43 @@ class GPModel(ProbModelBaseModel):
 
     @property
     def _tkwargs(self):
-        """Returns the device and dtype for the model."""
+        """Return tensor keyword arguments for this GP model.
+
+        Returns
+        -------
+        dict
+            Dictionary with ``"device"`` and ``"dtype"`` keys.
+
+        """
         return {"device": self.device, "dtype": self.dtype}
 
     def likelihood(self):
-        """Returns the likelihood of the model."""
+        """Return the likelihood module of the underlying GP model.
+
+        Returns
+        -------
+        gpytorch.likelihoods.Likelihood
+            The likelihood object associated with ``self.model``.
+
+        """
         return self.model.likelihood
 
     def mll(self, x, y):
-        """Returns the marginal log-likelihood value"""
+        """Compute the marginal log-likelihood (MLL).
+
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor.
+        y : torch.Tensor
+            Target tensor.
+
+        Returns
+        -------
+        float
+            Value of the marginal log-likelihood for the given data.
+
+        """
         self.model.eval()
         mll = ExactMarginalLogLikelihood(self.model.likelihood, self.model)
         return mll(self.model(x), y).item()
@@ -133,14 +212,24 @@ class GPModel(ProbModelBaseModel):
         input_dict: dict[str, float | torch.Tensor],
         observation_noise: bool = False,
     ) -> dict[str, TDistribution]:
-        """Get the predictions of the model.
-        This implements the abstract method from ProbModelBaseModel.
+        """Get predictive distributions from the GP model.
 
-        Args:
-            input_dict: Dictionary of input variable names to values.
+        This implements the abstract method from :class:`ProbModelBaseModel` by
+        constructing a BoTorch posterior and wrapping it as a distribution over
+        the outputs.
 
-        Returns:
-            Dictionary of output variable names to distributions.
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Dictionary of input variable names to values.
+        observation_noise : bool, optional
+            If ``True``, include observation noise in the posterior.
+
+        Returns
+        -------
+        dict of str to TDistribution
+            Dictionary of output variable names to predictive distributions.
+
         """
         # Reorder the input dictionary to match the model's input order
         input_dict = super()._arrange_inputs(input_dict)
@@ -160,25 +249,47 @@ class GPModel(ProbModelBaseModel):
         return self._create_output_dict((mean, covar))
 
     def _posterior(self, x: torch.Tensor, observation_noise: bool = False):
-        """Compute the posterior distribution.
+        """Compute the posterior distribution at the given inputs.
 
-        Args:
-            x: Input tensor.
+        Parameters
+        ----------
+        x : torch.Tensor
+            Input tensor at which to compute the posterior.
+        observation_noise : bool, optional
+            If ``True``, include observation noise in the posterior.
 
-        Returns:
+        Returns
+        -------
+        botorch.posteriors.Posterior
             Posterior object from the model.
+
         """
         self.model.eval()
         posterior = self.model.posterior(x, observation_noise=observation_noise)
         return posterior
 
     def _get_distribution(self, posterior) -> TDistribution:
-        """Get the distribution from the posterior and checks that the covariance_matrix attribute exists.
-        Args:
-            posterior: Posterior object from the model.
+        """Get a torch-like distribution from the posterior.
 
-        Returns:
-            A torch distribution object.
+        Checks that the resulting distribution exposes a
+        ``covariance_matrix`` attribute.
+
+        Parameters
+        ----------
+        posterior : botorch.posteriors.Posterior
+            Posterior object from the model.
+
+        Returns
+        -------
+        TDistribution
+            Torch distribution object representing the posterior.
+
+        Raises
+        ------
+        ValueError
+            If the posterior distribution does not have a covariance matrix
+            attribute.
+
         """
         if isinstance(posterior.distribution, TDistribution):
             d = posterior.distribution
@@ -196,16 +307,23 @@ class GPModel(ProbModelBaseModel):
     def _create_output_dict(
         self, output: tuple[torch.Tensor, torch.Tensor]
     ) -> dict[str, TDistribution]:
-        """Returns outputs as dictionary of output names and their corresponding distributions.
-        The returned distributions are constructed as torch multivariate normal distributions.
-        At the moment, no other distribution types are supported.
+        """Convert GP mean and covariance into output distributions.
 
-        Args:
-            output: Tuple containing mean and covariance of the output.
+        The returned distributions are constructed as multivariate normal
+        distributions (one per output variable). Currently only this type of
+        distribution is supported.
 
-        Returns:
-            Dictionary of output variable names to distributions. Distribution is a torch
-            multivariate normal distribution.
+        Parameters
+        ----------
+        output : tuple of (torch.Tensor, torch.Tensor)
+            Tuple containing mean and covariance of the joint GP output.
+
+        Returns
+        -------
+        dict of str to TDistribution
+            Dictionary of output variable names to multivariate normal
+            distributions.
+
         """
         output_distributions = {}
         mean, cov = output
@@ -237,13 +355,18 @@ class GPModel(ProbModelBaseModel):
         return output_distributions
 
     def _transform_inputs(self, input_tensor: torch.Tensor) -> torch.Tensor:
-        """Applies transformations to the inputs.
+        """Apply configured input transformations to the inputs.
 
-        Args:
-            input_tensor: Ordered input tensor to be passed to the transformers.
+        Parameters
+        ----------
+        input_tensor : torch.Tensor
+            Ordered input tensor to be passed to the transformers.
 
-        Returns:
-            Tensor of transformed inputs to be passed to the model.
+        Returns
+        -------
+        torch.Tensor
+            Transformed input tensor.
+
         """
         for transformer in self.input_transformers:
             if isinstance(transformer, ReversibleInputTransform):
@@ -253,13 +376,20 @@ class GPModel(ProbModelBaseModel):
         return input_tensor
 
     def _transform_mean(self, mean: torch.Tensor, i) -> torch.Tensor:
-        """(Un-)Transforms the model output mean.
+        """(Un-)transform the model output mean.
 
-        Args:
-            mean: Output mean tensor from the model.
+        Parameters
+        ----------
+        mean : torch.Tensor
+            Output mean tensor from the model.
+        i : int
+            Index of the output dimension.
 
-        Returns:
-            (Un-)Transformed output mean tensor.
+        Returns
+        -------
+        torch.Tensor
+            (Un-)transformed output mean tensor.
+
         """
         for transformer in self.output_transformers:
             if isinstance(transformer, ReversibleInputTransform):
@@ -288,14 +418,20 @@ class GPModel(ProbModelBaseModel):
         return mean
 
     def _transform_covar(self, cov: torch.Tensor, i: int) -> torch.Tensor:
-        """(Un-)Transforms the model output covariance matrix.
+        """(Un-)transform the model output covariance matrix.
 
-        Args:
-            cov: Output covariance matrix tensor from the model.
-            i: Index of the output variable.
+        Parameters
+        ----------
+        cov : torch.Tensor
+            Output covariance matrix tensor from the model.
+        i : int
+            Index of the output variable.
 
-        Returns:
-            (Un-)Transformed output covariance matrix tensor.
+        Returns
+        -------
+        torch.Tensor
+            (Un-)transformed output covariance matrix tensor.
+
         """
         for transformer in self.output_transformers:
             if isinstance(transformer, ReversibleInputTransform):
@@ -323,7 +459,22 @@ class GPModel(ProbModelBaseModel):
         return cov
 
     def _check_covariance_matrix(self, cov: torch.Tensor) -> torch.Tensor:
-        """Checks that the covariance matrix is positive definite, and adds jitter if not."""
+        """Ensure the covariance matrix is positive definite.
+
+        If the matrix is not positive definite, jitter is added until a
+        successful Cholesky factorization is obtained.
+
+        Parameters
+        ----------
+        cov : torch.Tensor
+            Covariance matrix to check.
+
+        Returns
+        -------
+        torch.Tensor
+            Positive definite covariance matrix.
+
+        """
         try:
             torch.linalg.cholesky(cov)
         except torch._C._LinAlgError:

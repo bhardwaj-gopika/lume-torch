@@ -1,3 +1,4 @@
+import logging
 from typing import Union, Any, Tuple
 from abc import abstractmethod
 
@@ -5,23 +6,51 @@ from pydantic import model_validator
 import torch
 from torch.distributions import Distribution as TDistribution
 
-from lume_model.variables import DistributionVariable
-from lume_model.models.utils import InputDictModel, format_inputs, itemize_dict
-from lume_model.base import LUMEBaseModel
+from lume_torch.variables import DistributionVariable
+from lume_torch.models.utils import InputDictModel, format_inputs, itemize_dict
+from lume_torch.base import LUMETorch
+
+logger = logging.getLogger(__name__)
 
 
-class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
+class ProbModelBaseModel(LUMETorch):  # TODO: brainstorm a better name
     """Abstract base class for probabilistic models.
 
-    This class provides a common interface for probabilistic models. All subclasses need to
-     implement a `_get_predictions` method that accepts a dictionary input, and returns a
-     dictionary of output names to _distributions_. The distributions should be instances of
-    `torch.distributions.Distribution`.
+    This class provides a common interface for probabilistic models. Subclasses must
+    implement :meth:`_get_predictions`, which accepts a dictionary of inputs and returns
+    a dictionary of output names mapped to distribution objects.
 
-    Attributes:
-        output_variables: List of output variables, which should be of DistributionVariable type.
-        device: Device on which the model will be evaluated. Defaults to "cpu".
-        precision: Precision of the model, either "double" or "single". Defaults to "double".
+    The output distributions should be instances of
+    :class:`torch.distributions.Distribution` (or be wrapped to follow the same
+    interface).
+
+    Attributes
+    ----------
+    output_variables : list of DistributionVariable
+        List of output variables, which must be of :class:`DistributionVariable` type.
+    device : torch.device or str
+        Device on which the model will be evaluated. Defaults to ``"cpu"``.
+    precision : {"double", "single"}
+        Precision of the model. ``"double"`` maps to ``torch.double`` and
+        ``"single"`` maps to ``torch.float``. Defaults to ``"double"``.
+
+    Methods
+    -------
+    _get_predictions(input_dict, **kwargs)
+        Abstract method that returns a dictionary of output distributions.
+    _evaluate(input_dict, **kwargs)
+        Evaluates the model and returns a dictionary of output distributions.
+    input_validation(input_dict)
+        Validates and normalizes the input dictionary prior to evaluation.
+    output_validation(output_dict)
+        Validates the output dictionary of distributions.
+
+    Notes
+    -----
+    Subclasses must implement :meth:`_get_predictions`. That method should return a
+    dictionary mapping each output variable name to a
+    :class:`torch.distributions.Distribution` instance (or equivalent).
+
     """
 
     output_variables: list[DistributionVariable]
@@ -61,13 +90,18 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
     def _arrange_inputs(
         self, d: dict[str, Union[float, torch.Tensor]]
     ) -> dict[str, Union[float, torch.Tensor]]:
-        """Enforces order of input variables before creating a tensor.
+        """Enforce the order of input variables before tensor creation.
 
-        Args:
-            d: Dictionary of input variable names to tensors.
+        Parameters
+        ----------
+        d : dict of str to float or torch.Tensor
+            Dictionary mapping input variable names to scalar values or tensors.
 
-        Returns:
-            Ordered input tensor.
+        Returns
+        -------
+        dict of str to float or torch.Tensor
+            New dictionary whose keys are ordered according to ``self.input_names``.
+
         """
         return {k: d[k] for k in self.input_names}
 
@@ -77,11 +111,17 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
     ) -> torch.Tensor:
         """Create a 2D tensor from a dictionary of floats and tensors.
 
-        Args:
-            d: Dictionary of floats or tensors.
+        Parameters
+        ----------
+        d : dict of str to float or torch.Tensor
+            Dictionary of floats or tensors.
 
-        Returns:
-            A Torch Tensor."""
+        Returns
+        -------
+        torch.Tensor
+            A 2D Torch Tensor.
+
+        """
         tensors = []
 
         for key, value in d.items():
@@ -115,25 +155,41 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
     ) -> dict[str, TDistribution]:
         """Get predictions from the model.
 
-        Args:
-             input_dict: Dictionary of input variable names to values. Values can be floats or
-                `n` or `b x n` (batch mode) torch tensors.
-        Returns:
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Dictionary of input variable names to values. Values can be floats or
+            tensors of shape ``n`` or ``b x n`` (batch mode).
+        **kwargs
+            Additional keyword arguments passed through to the concrete
+            implementation in subclasses.
+
+        Returns
+        -------
+        dict of str to TDistribution
             A dictionary of output variable names to distributions.
+
         """
         pass
 
     def _evaluate(
         self, input_dict: dict[str, Union[float, torch.Tensor]], **kwargs
     ) -> dict[str, TDistribution]:
-        """Evaluate the model.
+        """Evaluate the probabilistic model.
 
-        Args:
-            input_dict: Dictionary of input variable names to values. Values can be floats or
-                `n` or `b x n` (batch mode) torch tensors.
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Dictionary of input variable names to values. Values can be floats or
+            tensors of shape ``n`` or ``b × n`` (batch mode).
+        **kwargs
+            Additional keyword arguments forwarded to :meth:`_get_predictions`.
 
-        Returns:
-            A dictionary of output variable names to distributions.
+        Returns
+        -------
+        dict of str to torch.distributions.Distribution
+            Dictionary mapping output variable names to predictive distributions.
+
         """
         # Evaluate and get mean and variance for each output
         output_dict = self._get_predictions(input_dict, **kwargs)
@@ -144,11 +200,16 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
     def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
         """Validates input dictionary before evaluation.
 
-        Args:
-            input_dict: Input dictionary to validate.
+        Parameters
+        ----------
+        input_dict : dict of str to float or torch.Tensor
+            Input dictionary to validate.
 
-        Returns:
+        Returns
+        -------
+        dict of str to float or torch.Tensor
             Validated input dictionary.
+
         """
         # validate input type (ints only are cast to floats for scalars)
         validated_input = InputDictModel(input_dict=input_dict).input_dict
@@ -174,20 +235,54 @@ class ProbModelBaseModel(LUMEBaseModel):  # TODO: brainstorm a better name
         return validated_input
 
     def output_validation(self, output_dict: dict[str, TDistribution]):
-        """Itemizes tensors before performing output validation."""
+        """Itemizes tensors before performing output validation.
+
+        Parameters
+        ----------
+        output_dict : dict of str to TDistribution
+            Output dictionary to validate.
+
+        """
         itemized_outputs = itemize_dict(output_dict)
         for ele in itemized_outputs:
             super().output_validation(ele)
 
 
 class TorchDistributionWrapper(TDistribution):
-    """Wraps any distribution to provide a torch.distributions-like interface."""
+    """Wrap a custom distribution to provide a torch-like interface.
+
+    This class adapts an arbitrary "distribution-like" object so that it behaves
+    like a :class:`torch.distributions.Distribution` from the perspective of
+    downstream code.
+
+    Parameters
+    ----------
+    custom_dist : object
+        An instance of a custom distribution with methods or attributes
+        providing mean, variance (or covariance), log probability, and
+        sampling functionality.
+
+    Attributes
+    ----------
+    custom_dist : object
+        The underlying wrapped distribution object.
+    device : torch.device
+        Device on which returned tensors are allocated. Defaults to CPU.
+    dtype : torch.dtype
+        Default floating point dtype for returned tensors. Defaults to
+        ``torch.double``.
+
+    """
 
     def __init__(self, custom_dist):
-        """
-        Args:
-            custom_dist: An instance of a custom distribution with methods:
-                          mean, variance, log_prob, sample, and rsample.
+        """Initialize the TorchDistributionWrapper.
+
+        Parameters
+        ----------
+        custom_dist : object
+            An instance of a custom distribution with methods:
+            mean, variance, log_prob, sample, and rsample.
+
         """
         super().__init__()
         self.custom_dist = custom_dist
@@ -224,14 +319,22 @@ class TorchDistributionWrapper(TDistribution):
         return result
 
     def confidence_region(self) -> Tuple[torch.tensor, torch.tensor]:
-        """
-        Adapted from gpytorch.distributions.multivariate_normal
-        Returns 2 standard deviations above and below the mean.
+        """Return a 2-sigma confidence region around the mean.
 
-        Returns:
-            Pair of tensors of size `... x N`, where N is the
-            dimensionality of the random variable. The first (second) Tensor is the
-            lower (upper) end of the confidence region.
+        Adapted from :mod:`gpytorch.distributions.multivariate_normal`.
+
+        Returns
+        -------
+        tuple of torch.Tensor
+            Pair of tensors of size ``... × N``, where ``N`` is the
+            dimensionality of the random variable. The first (second) tensor is
+            the lower (upper) end of the confidence region.
+
+        Raises
+        ------
+        AttributeError
+            If the wrapped distribution does not expose a variance attribute.
+
         """
         try:
             stddev = self.variance.sqrt()
@@ -242,21 +345,57 @@ class TorchDistributionWrapper(TDistribution):
             raise AttributeError("The distribution does not have a variance attribute.")
 
     def log_prob(self, value: torch.Tensor) -> torch.Tensor:
-        """Compute the log probability for a given value."""
+        """Compute the log probability for a given value.
+
+        Parameters
+        ----------
+        value : torch.Tensor
+            The value for which to compute log probability.
+
+        Returns
+        -------
+        torch.Tensor
+            The log probability.
+
+        """
         attribute_names = ["log_prob", "log_likelihood", "logpdf"]
         result, _ = self._get_attr(attribute_names, value)
         return result
 
     # TODO: check fn signature
     def rsample(self, sample_shape: torch.Size()) -> torch.Tensor:
-        """Generate reparameterized samples from the custom distribution."""
+        """Generate reparameterized samples from the custom distribution.
+
+        Parameters
+        ----------
+        sample_shape : torch.Size
+            The shape of samples to generate.
+
+        Returns
+        -------
+        torch.Tensor
+            Reparameterized samples.
+
+        """
         # Fallback to sample if rsample is not implemented
         attribute_names = ["rsample", "sample", "rvs"]
         result, _ = self._get_attr(attribute_names, sample_shape)
         return result
 
     def sample(self, sample_shape: torch.Size()) -> torch.Tensor:
-        """Generate samples from the custom distribution (non-differentiable if using sample)."""
+        """Generate samples from the custom distribution (non-differentiable if using sample).
+
+        Parameters
+        ----------
+        sample_shape : torch.Size
+            The shape of samples to generate.
+
+        Returns
+        -------
+        torch.Tensor
+            Samples from the distribution.
+
+        """
         attribute_names = ["sample", "rvs"]
         # Assume non-torch.Distribution takes an integer sample_shape
         sample_shape = sample_shape.numel()
@@ -267,7 +406,29 @@ class TorchDistributionWrapper(TDistribution):
         return f"TorchDistributionWrapper({self.custom_dist})"
 
     def _get_attr(self, attribute_names, value=None):
-        """Get the first attribute that is found in the distribution."""
+        """Return the first available attribute from the wrapped distribution.
+
+        Parameters
+        ----------
+        attribute_names : sequence of str
+            Candidate attribute names to query on ``self.custom_dist``.
+        value : Any, optional
+            Optional value that is forwarded to the attribute if it is
+            callable (e.g. ``log_prob(value)``).
+
+        Returns
+        -------
+        tuple of (torch.Tensor, str)
+            A tuple containing the attribute value converted to a tensor and
+            the name of the attribute that was found.
+
+        Raises
+        ------
+        AttributeError
+            If none of the attributes in ``attribute_names`` are found on
+            ``self.custom_dist``.
+
+        """
         for attr_name in attribute_names:
             attr_value = getattr(self.custom_dist, attr_name, None)
             if attr_value is not None:

@@ -14,7 +14,7 @@ repos:
       - id: check-symlinks
       - id: check-xml
       - id: check-yaml
-        exclude: "^(python/lume_model/_version.py)$"
+        exclude: "^(python/lume_torch/_version.py)$"
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.9.6

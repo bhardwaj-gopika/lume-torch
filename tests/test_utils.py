@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from lume_model.utils import (
+from lume_torch.utils import (
     verify_unique_variable_names,
     variables_as_yaml,
     variables_from_yaml,

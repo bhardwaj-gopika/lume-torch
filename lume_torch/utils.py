@@ -1,28 +1,39 @@
 import os
 import sys
 import yaml
+import logging
 import importlib
 from typing import Union, get_origin, get_args
 
-from lume_model.variables import ScalarVariable, get_variable
+from lume_torch.variables import ScalarVariable, get_variable
+
+logger = logging.getLogger(__name__)
 
 
 def try_import_module(name: str):
     """Tries to import module if required.
 
-    Args:
-        name: Module name.
+    Parameters
+    ----------
+    name : str
+        Module name.
 
-    Returns:
+    Returns
+    -------
+    module or None
         Imported module if successful, None otherwise.
+
     """
     if name not in sys.modules:
         try:
             module = importlib.import_module(name)
-        except ImportError:
+            logger.debug(f"Successfully imported module: {name}")
+        except ImportError as e:
+            logger.debug(f"Failed to import module {name}: {e}")
             module = None
     else:
         module = sys.modules[name]
+        logger.debug(f"Module {name} already in sys.modules")
     return module
 
 
@@ -31,33 +42,53 @@ def verify_unique_variable_names(variables: list[ScalarVariable]):
 
     Raises a ValueError if any reoccurring variable names are found.
 
-    Args:
-        variables: List of scalar variables.
+    Parameters
+    ----------
+    variables : list of ScalarVariable
+        List of scalar variables.
+
+    Raises
+    ------
+    ValueError
+        If any variable names are not unique.
+
     """
     names = [var.name for var in variables]
     non_unique_names = [name for name in set(names) if names.count(name) > 1]
     if non_unique_names:
+        logger.error(f"Variable names {non_unique_names} are not unique")
         raise ValueError(f"Variable names {non_unique_names} are not unique.")
 
 
 def serialize_variables(v: dict):
     """Performs custom serialization for in- and output variables.
 
-    Args:
-        v: Object to serialize.
+    Parameters
+    ----------
+    v : dict
+        Object to serialize.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with serialized in- and output variables.
+
     """
+    logger.debug("Serializing variables")
     for key, value in v.items():
         if key in ["input_variables", "output_variables"] and isinstance(value, list):
+            # Call model_dump with mode='python' to ensure proper serialization
+            serialized_vars = [
+                var.model_dump(mode="python") if hasattr(var, "model_dump") else var
+                for var in value
+            ]
             v[key] = {
                 var_dict["name"]: {
                     var_k: var_v
                     for var_k, var_v in var_dict.items()
                     if not (var_k == "name" or var_v is None)
                 }
-                for var_dict in value
+                for var_dict in serialized_vars
             }
     return v
 
@@ -65,12 +96,18 @@ def serialize_variables(v: dict):
 def deserialize_variables(v):
     """Performs custom deserialization for in- and output variables.
 
-    Args:
-        v: Object to deserialize.
+    Parameters
+    ----------
+    v : dict
+        Object to deserialize.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with deserialized in- and output variables.
+
     """
+    logger.debug("Deserializing variables")
     for key, value in v.items():
         if key in ["input_variables", "output_variables"] and isinstance(value, dict):
             v[key] = [
@@ -86,14 +123,24 @@ def variables_as_yaml(
 ) -> str:
     """Returns and optionally saves YAML formatted string defining the in- and output variables.
 
-    Args:
-        input_variables: List of input variables.
-        output_variables: List of output variables.
-        file: If not None, YAML formatted string is saved to given file path.
+    Parameters
+    ----------
+    input_variables : list of ScalarVariable
+        List of input variables.
+    output_variables : list of ScalarVariable
+        List of output variables.
+    file : str or os.PathLike, optional
+        If not None, YAML formatted string is saved to given file path.
 
-    Returns:
+    Returns
+    -------
+    str
         YAML formatted string defining the in- and output variables.
+
     """
+    logger.debug(
+        f"Creating YAML for {len(input_variables)} input and {len(output_variables)} output variables"
+    )
     for variables in [input_variables, output_variables]:
         verify_unique_variable_names(variables)
     v = {
@@ -102,6 +149,7 @@ def variables_as_yaml(
     }
     s = yaml.safe_dump(serialize_variables(v), default_flow_style=None, sort_keys=False)
     if file is not None:
+        logger.info(f"Saving variables to file: {file}")
         with open(file, "w") as f:
             f.write(s)
     return s
@@ -112,12 +160,18 @@ def variables_from_dict(
 ) -> tuple[list[ScalarVariable], list[ScalarVariable]]:
     """Parses given config and returns in- and output variable lists.
 
-    Args:
-        config: Variable configuration.
+    Parameters
+    ----------
+    config : dict
+        Variable configuration.
 
-    Returns:
+    Returns
+    -------
+    tuple of (list of ScalarVariable, list of ScalarVariable)
         In- and output variable lists.
+
     """
+    logger.debug("Parsing variables from dictionary")
     input_variables, output_variables = [], []
     for key, value in {**config}.items():
         if key in ["input_variables", "output_variables"]:
@@ -129,6 +183,9 @@ def variables_from_dict(
                     output_variables.append(variable_class(**var))
     for variables in [input_variables, output_variables]:
         verify_unique_variable_names(variables)
+    logger.debug(
+        f"Parsed {len(input_variables)} input and {len(output_variables)} output variables"
+    )
     return input_variables, output_variables
 
 
@@ -137,16 +194,23 @@ def variables_from_yaml(
 ) -> tuple[list[ScalarVariable], list[ScalarVariable]]:
     """Parses YAML object and returns in- and output variable lists.
 
-    Args:
-        yaml_obj: YAML formatted string or file path.
+    Parameters
+    ----------
+    yaml_obj : str or os.PathLike
+        YAML formatted string or file path.
 
-    Returns:
+    Returns
+    -------
+    tuple of (list of ScalarVariable, list of ScalarVariable)
         In- and output variable lists.
+
     """
     if os.path.exists(yaml_obj):
+        logger.debug(f"Loading variables from file: {yaml_obj}")
         with open(yaml_obj) as f:
             yaml_str = f.read()
     else:
+        logger.debug("Parsing variables from YAML string")
         yaml_str = yaml_obj
     config = deserialize_variables(yaml.safe_load(yaml_str))
     return variables_from_dict(config)
@@ -158,19 +222,35 @@ def get_valid_path(
 ) -> Union[str, os.PathLike]:
     """Validates path exists either as relative or absolute path and returns the first valid option.
 
-    Args:
-        path: Path to validate.
-        directory: Directory against which relative paths are checked.
+    Parameters
+    ----------
+    path : str or os.PathLike
+        Path to validate.
+    directory : str or os.PathLike, optional
+        Directory against which relative paths are checked.
 
-    Returns:
+    Returns
+    -------
+    str or os.PathLike
         The first valid path option as an absolute path.
+
+    Raises
+    ------
+    OSError
+        If file is not found.
+
     """
     relative_path = os.path.join(directory, path)
     if os.path.exists(relative_path):
+        logger.debug(f"Found relative path: {relative_path}")
         return os.path.abspath(relative_path)
     elif os.path.exists(path):
+        logger.debug(f"Found absolute path: {path}")
         return os.path.abspath(path)
     else:
+        logger.error(
+            f"File {path} not found in directory {directory} or as absolute path"
+        )
         raise OSError(f"File {path} is not found.")
 
 
@@ -181,14 +261,22 @@ def replace_relative_paths(
 ) -> dict:
     """Replaces dictionary entries with absolute paths where the model field annotation is not string or path-like.
 
-    Args:
-        d: Dictionary to process.
-        model_fields: Model fields dictionary used to check expected type.
-        directory: Directory against which relative paths are checked.
+    Parameters
+    ----------
+    d : dict
+        Dictionary to process.
+    model_fields : dict, optional
+        Model fields dictionary used to check expected type.
+    directory : str or os.PathLike, optional
+        Directory against which relative paths are checked.
 
-    Returns:
+    Returns
+    -------
+    dict
         Dictionary with replaced paths.
+
     """
+    logger.debug(f"Replacing relative paths with directory base: {directory}")
     if model_fields is None:
         model_fields = {}
     for k, v in d.items():

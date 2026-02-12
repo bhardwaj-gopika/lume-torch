@@ -3,8 +3,8 @@ requires = ["setuptools>=75.0", "setuptools_scm[toml]"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lume-model"
-description = "Data structures used in the LUME modeling toolset."
+name = "lume-torch"
+description = "LUME compatible wrapper for Torch based surrogate models."
 readme = "README.md"
 authors = [
   { name = "SLAC National Accelerator Laboratory"},
@@ -24,18 +24,20 @@ dependencies = [
     "pydantic",
     "numpy",
     "pyyaml",
-    "torch",
     "botorch>=0.15",
-    "mlflow"
+    "lume-base @ git+https://github.com/roussel-ryan/lume-base@main"
 ]
 dynamic = ["version"]
 [tool.setuptools_scm]
-version_file = "lume_model/_version.py"
+version_file = "lume_torch/_version.py"
 
 [project.optional-dependencies]
 dev = [
     "pre-commit",
     "pytest"
+]
+mlflow = [
+    "mlflow"
 ]
 docs = [
     "mkdocs",
@@ -46,9 +48,9 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/slaclab/lume-model"
-Documentation = "https://slaclab.github.io/lume-model/"
-"Bug Tracker" = "https://github.com/slaclab/lume-model/issues"
+Homepage = "https://github.com/lume-science/lume-torch"
+Documentation = "https://lume-science.github.io/lume-torch/"
+"Bug Tracker" = "https://github.com/lume-science/lume-torch/issues"
 
 [project.license]
 file = "LICENSE"
@@ -58,7 +60,7 @@ zip_safe = false
 include_package_data = true
 
 [tool.setuptools.packages.find]
-include = [ "lume_model", ]
+include = [ "lume_torch", ]
 namespaces = false
 
 [tool.ruff]
