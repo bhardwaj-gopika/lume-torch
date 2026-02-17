@@ -801,6 +801,7 @@ class LUMETorchModel(LUMEModel):
             Initial input values. If None, uses default values from variables.
         """
         self.torch_model = torch_model
+        self._initial_inputs = initial_inputs
 
         # Initialize state
         self._state = {}
@@ -881,3 +882,168 @@ class LUMETorchModel(LUMEModel):
             variables[var.name] = var
 
         return variables
+
+    def model_dump(self, **kwargs) -> dict[str, Any]:
+        """
+        Dump the model configuration as a dictionary.
+
+        Parameters
+        ----------
+        **kwargs
+            Additional keyword arguments passed to torch_model.model_dump()
+
+        Returns
+        -------
+        dict[str, Any]
+            Dictionary containing the model configuration.
+        """
+        config = {
+            "model_class": self.__class__.__name__,
+            "torch_model": self.torch_model.model_dump(**kwargs),
+        }
+        
+        if self._initial_inputs is not None:
+            config["initial_inputs"] = self._initial_inputs
+        
+        return config
+
+    def yaml(
+        self,
+        base_key: str = "",
+        file_prefix: str = "",
+        save_models: bool = False,
+        save_jit: bool = False,
+    ) -> str:
+        """
+        Serialize the model to a YAML formatted string.
+
+        Parameters
+        ----------
+        base_key : str, optional
+            Base key for serialization.
+        file_prefix : str, optional
+            Prefix for generated filenames.
+        save_models : bool, optional
+            Whether to save torch model files to disk.
+        save_jit : bool, optional
+            Whether to save models as TorchScript.
+
+        Returns
+        -------
+        str
+            YAML formatted string defining the model.
+        """
+        # Get the torch model's yaml representation
+        torch_model_yaml = self.torch_model.yaml(
+            base_key=base_key,
+            file_prefix=file_prefix,
+            save_models=save_models,
+            save_jit=save_jit,
+        )
+        
+        # Parse it to dict
+        torch_model_config = yaml.safe_load(torch_model_yaml)
+        
+        # Build the full config
+        config = {
+            "model_class": self.__class__.__name__,
+            "torch_model": torch_model_config,
+        }
+        
+        if self._initial_inputs is not None:
+            config["initial_inputs"] = self._initial_inputs
+        
+        return yaml.dump(config, default_flow_style=None, sort_keys=False)
+
+    def dump(
+        self,
+        file: Union[str, os.PathLike],
+        base_key: str = "",
+        save_models: bool = True,
+        save_jit: bool = False,
+    ):
+        """
+        Save model configuration to a YAML file.
+
+        Parameters
+        ----------
+        file : str or os.PathLike
+            File path to save the configuration.
+        base_key : str, optional
+            Base key for serialization.
+        save_models : bool, optional
+            Whether to save torch model files to disk.
+        save_jit : bool, optional
+            Whether to save models as TorchScript.
+        """
+        file_prefix = os.path.splitext(os.path.abspath(file))[0]
+        with open(file, "w") as f:
+            f.write(
+                self.yaml(
+                    base_key=base_key,
+                    file_prefix=file_prefix,
+                    save_models=save_models,
+                    save_jit=save_jit,
+                )
+            )
+
+    @classmethod
+    def from_file(cls, filename: str):
+        """
+        Load a model from a YAML file.
+
+        Parameters
+        ----------
+        filename : str
+            Path to the YAML file.
+
+        Returns
+        -------
+        LUMETorchModel
+            Instance of the model loaded from the file.
+
+        Raises
+        ------
+        OSError
+            If the file does not exist.
+        """
+        if not os.path.exists(filename):
+            raise OSError(f"File {filename} is not found.")
+        
+        with open(filename, "r") as file:
+            return cls.from_yaml(file)
+
+    @classmethod
+    def from_yaml(cls, yaml_obj: Union[str, TextIOWrapper]):
+        """
+        Load a model from a YAML string or file object.
+
+        Parameters
+        ----------
+        yaml_obj : str or TextIOWrapper
+            YAML formatted string or file object.
+
+        Returns
+        -------
+        LUMETorchModel
+            Instance of the model loaded from the YAML.
+        """
+        config = yaml.safe_load(yaml_obj)
+        
+        # Get the torch model config
+        torch_model_config = config["torch_model"]
+        
+        # Get the model class name
+        model_class_name = torch_model_config.get("model_class")
+        
+        # Dynamically import the model class
+        from lume_torch import models as torch_models
+        torch_model_class = getattr(torch_models, model_class_name)
+        
+        # Load the torch model using its from_yaml method
+        torch_model = torch_model_class.from_yaml(yaml.dump(torch_model_config))
+        
+        # Get initial inputs if present
+        initial_inputs = config.get("initial_inputs")
+        
+        return cls(torch_model=torch_model, initial_inputs=initial_inputs)
