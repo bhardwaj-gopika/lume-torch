@@ -23,6 +23,7 @@ from lume_torch.mlflow_utils import register_model
 
 from lume.model import LUMEModel
 from lume.variables import Variable
+from lume_torch import models as torch_models
 
 logger = logging.getLogger(__name__)
 
@@ -901,10 +902,10 @@ class LUMETorchModel(LUMEModel):
             "model_class": self.__class__.__name__,
             "torch_model": self.torch_model.model_dump(**kwargs),
         }
-        
+
         if self._initial_inputs is not None:
             config["initial_inputs"] = self._initial_inputs
-        
+
         return config
 
     def yaml(
@@ -940,19 +941,19 @@ class LUMETorchModel(LUMEModel):
             save_models=save_models,
             save_jit=save_jit,
         )
-        
+
         # Parse it to dict
         torch_model_config = yaml.safe_load(torch_model_yaml)
-        
+
         # Build the full config
         config = {
             "model_class": self.__class__.__name__,
             "torch_model": torch_model_config,
         }
-        
+
         if self._initial_inputs is not None:
             config["initial_inputs"] = self._initial_inputs
-        
+
         return yaml.dump(config, default_flow_style=None, sort_keys=False)
 
     def dump(
@@ -1009,7 +1010,7 @@ class LUMETorchModel(LUMEModel):
         """
         if not os.path.exists(filename):
             raise OSError(f"File {filename} is not found.")
-        
+
         with open(filename, "r") as file:
             return cls.from_yaml(file)
 
@@ -1029,21 +1030,19 @@ class LUMETorchModel(LUMEModel):
             Instance of the model loaded from the YAML.
         """
         config = yaml.safe_load(yaml_obj)
-        
+
         # Get the torch model config
         torch_model_config = config["torch_model"]
-        
+
         # Get the model class name
         model_class_name = torch_model_config.get("model_class")
-        
-        # Dynamically import the model class
-        from lume_torch import models as torch_models
+
         torch_model_class = getattr(torch_models, model_class_name)
-        
+
         # Load the torch model using its from_yaml method
         torch_model = torch_model_class.from_yaml(yaml.dump(torch_model_config))
-        
+
         # Get initial inputs if present
         initial_inputs = config.get("initial_inputs")
-        
+
         return cls(torch_model=torch_model, initial_inputs=initial_inputs)
