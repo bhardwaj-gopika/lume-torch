@@ -789,7 +789,7 @@ class LUMETorchModel(LUMEModel):
     """
 
     def __init__(
-        self, torch_model: LUMETorch, initial_inputs: Optional[dict[str, Any]] = None
+        self, torch_model: LUMETorch
     ):
         """
          Initialize the LUMETorchModel.
@@ -798,19 +798,14 @@ class LUMETorchModel(LUMEModel):
         ----------
         torch_model : LUMETorch
             The LUMETorch model to wrap.
-        initial_inputs : dict[str, Any], optional
-            Initial input values. If None, uses default values from variables.
         """
         self.torch_model = torch_model
-        self._initial_inputs = initial_inputs
 
         # Initialize state
         self._state = {}
 
-        # Set initial values
-        if initial_inputs is None:
-            initial_inputs = self._get_default_inputs()
-
+        # Set initial values from defaults
+        initial_inputs = self._get_default_inputs()
         if initial_inputs:
             self.set(initial_inputs)
 
@@ -903,9 +898,6 @@ class LUMETorchModel(LUMEModel):
             "torch_model": self.torch_model.model_dump(**kwargs),
         }
 
-        if self._initial_inputs is not None:
-            config["initial_inputs"] = self._initial_inputs
-
         return config
 
     def yaml(
@@ -950,9 +942,6 @@ class LUMETorchModel(LUMEModel):
             "model_class": self.__class__.__name__,
             "torch_model": torch_model_config,
         }
-
-        if self._initial_inputs is not None:
-            config["initial_inputs"] = self._initial_inputs
 
         return yaml.dump(config, default_flow_style=None, sort_keys=False)
 
@@ -1031,6 +1020,11 @@ class LUMETorchModel(LUMEModel):
         """
         config = yaml.safe_load(yaml_obj)
 
+         # DEBUG: Check order right after loading YAML
+        print("DEBUG: After yaml.safe_load")
+        if isinstance(config["torch_model"]["input_variables"], dict):
+            print("Input vars keys:", list(config["torch_model"]["input_variables"].keys()))
+
         # Get the torch model config
         torch_model_config = config["torch_model"]
 
@@ -1040,10 +1034,17 @@ class LUMETorchModel(LUMEModel):
         torch_models = importlib.import_module("lume_torch.models")
         torch_model_class = getattr(torch_models, model_class_name)
 
+        # DEBUG: Check order before passing to from_yaml
+        print("DEBUG: Before torch_model_class.from_yaml")
+        torch_yaml_str = yaml.dump(torch_model_config, sort_keys=False)
+        print("First 500 chars of torch YAML:")
+        print(torch_yaml_str[:500])
+
         # Load the torch model using its from_yaml method
         torch_model = torch_model_class.from_yaml(yaml.dump(torch_model_config))
 
-        # Get initial inputs if present
-        initial_inputs = config.get("initial_inputs")
+         # DEBUG: Check order after torch model loaded
+        print("DEBUG: After torch model loaded")
+        print("Torch model input names:", torch_model.input_names)
 
-        return cls(torch_model=torch_model, initial_inputs=initial_inputs)
+        return cls(torch_model=torch_model)
