@@ -565,7 +565,7 @@ class LUMETorch(BaseModel, ABC):
                 else self.output_validation_config.get(name)
             )
             var = self.output_variables[self.output_names.index(name)]
-            var.validate_value(value, config=_config)
+            var.validate_value(value, config=_config, read_only_validation=False)
         return output_dict
 
     def to_json(self, **kwargs) -> str:

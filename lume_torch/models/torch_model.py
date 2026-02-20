@@ -4,7 +4,7 @@ from typing import Union, Callable
 from copy import deepcopy
 
 import torch
-from pydantic import field_validator
+from pydantic import field_validator, Field
 from botorch.models.transforms.input import ReversibleInputTransform
 
 from lume_torch.base import LUMETorch
@@ -70,10 +70,10 @@ class TorchModel(LUMETorch):
     model: torch.nn.Module
     input_transformers: list[
         Union[ReversibleInputTransform, torch.nn.Linear, Callable]
-    ] = None
+    ] = Field(default_factory=list)
     output_transformers: list[
         Union[ReversibleInputTransform, torch.nn.Linear, Callable]
-    ] = None
+    ] = Field(default_factory=list)
     output_format: str = "tensor"
     device: Union[torch.device, str] = "cpu"
     fixed_model: bool = True
@@ -92,12 +92,6 @@ class TorchModel(LUMETorch):
 
         """
         super().__init__(*args, **kwargs)
-        self.input_transformers = (
-            [] if self.input_transformers is None else self.input_transformers
-        )
-        self.output_transformers = (
-            [] if self.output_transformers is None else self.output_transformers
-        )
 
         # dtype property sets precision across model and transformers
         self.dtype
@@ -221,6 +215,8 @@ class TorchModel(LUMETorch):
         OSError
             If a transformer file does not exist.
         """
+        if v is None:
+            return []
         if not isinstance(v, list):
             logger.error(f"Transformers must be a list, got {type(v)}")
             raise ValueError("Transformers must be passed as list.")
@@ -340,7 +336,7 @@ class TorchModel(LUMETorch):
             Validated input dictionary.
 
         """
-        # validate original inputs (catches dtype mismatches)
+        # type/dtype check on raw user-provided values (before tensor conversion)
         super().input_validation(input_dict)
 
         # format inputs as tensors w/o changing the dtype
@@ -351,8 +347,11 @@ class TorchModel(LUMETorch):
             k: v.to(**self._tkwargs) for k, v in formatted_inputs.items()
         }
 
-        # check default values for missing inputs
+        # fill missing inputs with defaults
         filled_inputs = self._fill_default_inputs(formatted_inputs)
+
+        # range/bounds check on fully-prepared inputs (includes dynamic defaults)
+        super().input_validation(filled_inputs)
 
         return filled_inputs
 

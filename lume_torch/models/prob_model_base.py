@@ -210,7 +210,7 @@ class ProbabilisticBaseModel(LUMETorch):
             Validated input dictionary.
 
         """
-        # validate original inputs (catches dtype mismatches)
+        # type/dtype check on raw user-provided values (before tensor conversion)
         super().input_validation(input_dict)
 
         # format inputs as tensors w/o changing the dtype
