@@ -1,6 +1,6 @@
 import os
 import logging
-from pydantic import field_validator
+from pydantic import field_validator, Field
 
 import torch
 from torch.distributions import Distribution as TDistribution
@@ -64,10 +64,12 @@ class GPModel(ProbabilisticBaseModel):
     """
 
     model: SingleTaskGP | MultiTaskGP | ModelListGP
-    input_transformers: list[ReversibleInputTransform | torch.nn.Linear] | None = None
+    input_transformers: list[ReversibleInputTransform | torch.nn.Linear] | None = Field(
+        default_factory=list
+    )
     output_transformers: (
         list[OutcomeTransform | ReversibleInputTransform | torch.nn.Linear] | None
-    ) = None
+    ) = Field(default_factory=list)
 
     @field_validator("model", mode="before")
     def validate_gp_model(cls, v):
