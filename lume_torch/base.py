@@ -7,6 +7,7 @@ from types import FunctionType, MethodType
 from io import TextIOWrapper
 
 import yaml
+import torch
 import numpy as np
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -42,12 +43,8 @@ JSON_ENCODERS = {
     np.ndarray: lambda x: x.tolist(),
     np.int64: lambda x: int(x),
     np.float64: lambda x: float(x),
+    torch.Tensor: lambda x: x.tolist(),
 }
-
-# Add torch.Tensor encoder if torch is available
-torch = try_import_module("torch")
-if torch is not None:
-    JSON_ENCODERS[torch.Tensor] = lambda x: x.tolist()
 
 
 def process_torch_module(
