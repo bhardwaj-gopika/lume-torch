@@ -337,9 +337,21 @@ class TorchModel(LUMETorch):
 
         """
         # type/dtype check on raw user-provided values (before tensor conversion)
-        self._validate_dict_per_variable(
-            input_dict, self.input_variables, self.input_validation_config
-        )
+        for var in self.input_variables:
+            config = (
+                None
+                if self.input_validation_config is None
+                else self.input_validation_config[var.name]
+            )
+            if var.name in input_dict:
+                if var.read_only:
+                    var.validate_value(var.default_value, config=config)
+                    var.validate_read_only(input_dict[var.name], config=config)
+                else:
+                    var.validate_value(input_dict[var.name], config=config)
+            else:
+                # check all other default values in case of dynamic changes to defaults
+                var.validate_value(var.default_value, config=config)
 
         # format inputs as tensors w/o changing the dtype
         formatted_inputs = format_inputs(input_dict)
@@ -349,22 +361,10 @@ class TorchModel(LUMETorch):
             k: v.to(**self._tkwargs) for k, v in formatted_inputs.items()
         }
 
-        # fill missing inputs with defaults
-        filled_inputs = self._fill_default_inputs(formatted_inputs)
-
-        # range/bounds check on fully-prepared inputs (includes dynamic defaults)
-        self._validate_dict_per_variable(
-            filled_inputs, self.input_variables, self.input_validation_config
-        )
-
-        return filled_inputs
+        return formatted_inputs
 
     def output_validation(self, output_dict: dict[str, Union[float, torch.Tensor]]):
-        """Itemize tensors before performing output validation.
-
-        Variable classes expect single-sample values (no batch dimensions).
-        This method delegates to the shared ``_validate_dict_per_variable``
-        helper on the base class.
+        """Validate the output dictionary after evaluation.
 
         Parameters
         ----------
@@ -372,9 +372,14 @@ class TorchModel(LUMETorch):
             Output dictionary to validate.
 
         """
-        self._validate_dict_per_variable(
-            output_dict, self.output_variables, self.output_validation_config
-        )
+        for var in self.output_variables:
+            config = (
+                None
+                if self.output_validation_config is None
+                else self.output_validation_config[var.name]
+            )
+            if var.name in output_dict:
+                var.validate_value(output_dict[var.name], config=config)
 
     def random_input(self, n_samples: int = 1) -> dict[str, torch.Tensor]:
         """Generates random input(s) for the model.

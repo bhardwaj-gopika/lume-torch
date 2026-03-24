@@ -6,7 +6,7 @@ but they can be used to validate encountered values.
 
 import logging
 import warnings
-from typing import Optional, Type, Union, ClassVar, List, Any, Self, Iterable
+from typing import Optional, Type, Union, ClassVar, List, Any, Self
 
 import torch
 from torch import Tensor
@@ -67,53 +67,24 @@ _STR_TO_TORCH_DTYPE: dict[str, "torch.dtype"] = {
 }
 
 
-def _validate_batched_value_from_samples(
-    var: Variable,
-    samples: Any,
-    *,
-    config: Optional[ConfigEnum] = None,
-    validate_every_sample: bool = False,
-) -> None:
-    """Apply model-layer validation using per-sample iteration contract.
+def _normalize_legacy_read_only(data: Any) -> Any:
+    """Map legacy `is_constant` input to canonical `read_only`."""
+    if not isinstance(data, dict):
+        return data
 
-    Parameters
-    ----------
-    var : Variable
-        Variable instance used for value-level validation.
-    samples : Any
-        Iterable of unbatched validation samples.
-    config : ConfigEnum, optional
-        Optional validation strictness.
-    validate_every_sample : bool, optional
-        When True, run ``validate_value`` for each sample. When False,
-        run ``validate_value`` only for the first sample and rely on the
-        variable's structural checks to cover batch shape/type expectations.
-
-    """
-    if isinstance(samples, Tensor):
-        if samples.numel() == 0:
-            raise ValueError(f"Variable '{var.name}' received an empty batch.")
-
-        validation_samples = samples if validate_every_sample else samples[:1]
-        for sample in validation_samples:
-            var.validate_value(sample, config=config)
-
-        if getattr(var, "read_only", False) and hasattr(var, "_validate_read_only"):
-            for sample in samples:
-                var._validate_read_only(sample)
-        return
-
-    sample_list = list(samples)
-    if not sample_list:
-        raise ValueError(f"Variable '{var.name}' received an empty batch.")
-
-    validation_samples = sample_list if validate_every_sample else sample_list[:1]
-    for sample in validation_samples:
-        var.validate_value(sample, config=config)
-
-    if getattr(var, "read_only", False) and hasattr(var, "_validate_read_only"):
-        for sample in sample_list:
-            var._validate_read_only(sample)
+    normalized = dict(data)
+    if "is_constant" in normalized:
+        warnings.warn(
+            "The 'is_constant' attribute is deprecated and will be removed in a future release. "
+            "Use 'read_only' instead.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        if "read_only" not in normalized:
+            normalized["read_only"] = normalized["is_constant"]
+    # Drop legacy key so stricter extra-field policies won't reject it.
+    normalized.pop("is_constant", None)
+    return normalized
 
 
 class DistributionVariable(Variable):
@@ -127,6 +98,11 @@ class DistributionVariable(Variable):
     """
 
     unit: Optional[str] = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _compat_is_constant(cls, data: Any) -> Any:
+        return _normalize_legacy_read_only(data)
 
     def validate_value(
         self, value: TDistribution, config: Optional[ConfigEnum] = None, **kwargs
@@ -163,24 +139,15 @@ class DistributionVariable(Variable):
                 f"but received {type(value)}."
             )
 
-    def iter_validation_samples(self, value: TDistribution) -> Iterable[TDistribution]:
-        """Return one unbatched sample for model-layer validation."""
-        return (value,)
-
-    def validate_batched_value(
-        self, value: TDistribution, config: Optional[ConfigEnum] = None
-    ) -> None:
-        """Batch-aware validation entry point."""
-        _validate_batched_value_from_samples(
-            self, self.iter_validation_samples(value), config=config
-        )
-
 
 class TorchScalarVariable(_BaseScalarVariable):
     """Variable for scalar values represented as PyTorch tensors.
 
     This class extends ScalarVariable to support scalar values as torch.Tensor
     with 0 or 1 dimensions (i.e., a scalar tensor or a single-element tensor).
+
+    This class also overrides validation to handle the tensor cases for batched and unbatched cases,
+    including optional range checks and read-only checks that compare tensor values with tolerance.
 
     Attributes
     ----------
@@ -197,12 +164,69 @@ class TorchScalarVariable(_BaseScalarVariable):
     default_value: Optional[Union[Tensor, float]] = None
     dtype: Optional[torch.dtype] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _compat_is_constant(cls, data: Any) -> Any:
+        return _normalize_legacy_read_only(data)
+
+    @field_serializer("default_value")
+    def serialize_default_value(
+        self, value: Optional[Union[Tensor, float]]
+    ) -> Optional[float]:
+        """Serialize default_value to a Python float when it is a torch.Tensor.
+
+        Parameters
+        ----------
+        value : Tensor or float or None
+
+        Returns
+        -------
+        float or None
+
+        """
+        if isinstance(value, Tensor):
+            return value.item()
+        return value
+
+    @field_serializer("dtype")
+    def serialize_dtype(self, value: Optional[torch.dtype]) -> Optional[str]:
+        """Serialize torch.dtype to its string representation.
+
+        Parameters
+        ----------
+        value : torch.dtype or None
+
+        Returns
+        -------
+        str or None
+            Dtype string, e.g. ``"torch.float32"``, or ``None``.
+
+        """
+        if value is None:
+            return None
+        return str(value)
+
     @field_validator("dtype", mode="before")
     @classmethod
     def validate_dtype(cls, value):
-        """Validate that dtype is a torch.dtype and is a floating-point type."""
+        """Validate (and coerce) dtype to a torch.dtype floating-point type.
+
+        Accepts either a ``torch.dtype`` instance or a string (e.g. ``"float32"``
+        or ``"torch.float32"``) so that JSON round-trips work correctly.
+        """
         if value is None:
             return None
+
+        # Coerce strings produced by serialize_dtype back to torch.dtype
+        if isinstance(value, str):
+            key = value.replace("torch.", "")
+            if key not in _STR_TO_TORCH_DTYPE:
+                raise TypeError(
+                    f"dtype must be a known torch.dtype string, "
+                    f"cannot coerce {value!r}. "
+                    f"Known names: {sorted(_STR_TO_TORCH_DTYPE)}"
+                )
+            value = _STR_TO_TORCH_DTYPE[key]
 
         # Validate that value is a torch.dtype instance
         if not isinstance(value, torch.dtype):
@@ -223,58 +247,25 @@ class TorchScalarVariable(_BaseScalarVariable):
             self.validate_value(self.default_value, ConfigEnum.ERROR)
         return self
 
-    def validate_value(
-        self, value: Union[Tensor, float], config: Optional[ConfigEnum] = None
-    ):
-        """Validates the given tensor or float value.
-
-        Performs type, dtype, and range validation. Read-only validation
-        is not performed here — it is the responsibility of the model layer
-        to call ``_validate_read_only`` separately when appropriate.
-
-        Parameters
-        ----------
-        value : Tensor | float
-            The value to be validated. If a tensor, must be a 0D scalar tensor.
-            Batched tensors must be unbatched at the model layer before calling
-            this method.
-        config : ConfigEnum, optional
-            The configuration for validation. Defaults to None.
-            Allowed values are "none", "warn", and "error".
-
-        Raises
-        ------
-        TypeError
-            If the value is not a torch.Tensor or float.
-        ValueError
-            If a tensor is not a 0D scalar, or if tensor dtype is not a float
-            type, or if value is out of range.
-
-        """
-        # mandatory validation
-        self._validate_value_type(value)
-        self._validate_dtype(value)
-
-        # optional validation
-        config = self._validation_config_as_enum(config)
-
-        if config != ConfigEnum.NULL:
-            scalar_value = value.item() if isinstance(value, Tensor) else value
-            self._validate_value_is_within_range(scalar_value, config=config)
+    def _unbatch(self, value: Tensor) -> Tensor:
+        """Unbatch a tensor with a batch dimension, returning an iterator over samples."""
+        if value.ndim == 0:
+            return (value,)
+        elif value.ndim > 0 and value.shape[-1] == 1:
+            return value.flatten()
+        else:
+            raise ValueError(
+                f"Expected a 0D scalar tensor or a 1D tensor with a single element in the "
+                f"last dimension, but got {value.ndim} dimensions with shape {value.shape}. "
+            )
 
     def _validate_value_type(self, value):
-        """Validates that value is a 0D torch.Tensor or a regular float/int.
-
-        Batched tensors are not accepted here; batch handling is the
-        responsibility of the model layer
-        (see :meth:`LUMETorch._validate_dict_per_variable`).
-        """
+        """Validates that value is a 0D/1D torch.Tensor or a regular float/int."""
         if isinstance(value, Tensor):
-            if value.ndim != 0:
+            if value.ndim != 0 and not (value.ndim == 1 and value.shape[0] == 1):
                 raise ValueError(
-                    f"Expected a 0D scalar tensor, "
+                    f"Expected a 0D scalar tensor or a 1D tensor with a single element, "
                     f"but got {value.ndim} dimensions with shape {value.shape}. "
-                    f"Batched tensors should be unbatched at the model layer."
                 )
         else:
             # Delegate to parent class for non-tensor validation
@@ -291,58 +282,114 @@ class TorchScalarVariable(_BaseScalarVariable):
         if self.dtype and value.dtype != self.dtype:
             raise ValueError(f"Expected dtype {self.dtype}, got {value.dtype}")
 
-    def _validate_read_only(self, value: Union[Tensor, float]):
-        """Validates that a read-only variable's value matches its default.
+    def validate_value(
+        self, value: Union[Tensor, float], config: Optional[ConfigEnum] = None
+    ):
+        """Validates the given tensor or float value, handling batches if present.
 
-        This method validates a single scalar value (float or 0D/single-element
-        tensor). Batch handling is the responsibility of the model layer.
+        Parameters
+        ----------
+        value : Tensor or float
+            The value to be validated. Can be a 0D scalar tensor, a 1
+            tensor with a single or batched elements, or a regular float.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error". If not "none",
+            performs optional range checks on the scalar values.
+
+        Raises
+        ------
+        ValueError
+            If the value fails type/dtype validation or range checks based on config.
+
         """
-        if not self.read_only:
-            return
+        # Unbatch if appropriate and get samples
+        samples = self._unbatch(value) if isinstance(value, Tensor) else (value,)
 
+        # Validate dtype/type strictly on first sample
+        first_sample = (
+            samples[0] if isinstance(samples, (list, tuple)) else next(iter(samples))
+        )
+        self._validate_value_type(first_sample)
+        self._validate_dtype(first_sample)
+
+        # Optional range validation for all samples if config != NULL
+        config_enum = self._validation_config_as_enum(config)
+        if config_enum != ConfigEnum.NULL:
+            for sample in samples:
+                scalar_value = sample.item() if isinstance(sample, Tensor) else sample
+                self._validate_value_is_within_range(scalar_value, config=config_enum)
+
+    def validate_read_only(
+        self,
+        value: Union[Tensor, float],
+        config: Optional[ConfigEnum] = None,
+        rtol: float = 1e-9,
+        atol: float = 1e-9,
+    ) -> list:
+        """Validate that all (possibly batched) values equal the default value (with tolerance).
+        Returns a list of indices where the check fails. Follows config for error/warn/none.
+
+        Parameters
+        ----------
+        value : Tensor or float
+            The value to be validated. Can be a 0D scalar tensor, a 1
+            tensor with a single or batched elements, or a regular float.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error".
+        rtol : float, optional
+            Relative tolerance for comparison. Defaults to 1e-9.
+        atol : float, optional
+            Absolute tolerance for comparison. Defaults to 1e-9.
+
+        Returns
+        -------
+        list
+            A list of indices (flattened) where the value does not match the default value within
+            the specified tolerances.
+
+        Raises
+        ------
+        ValueError
+            If the variable is read-only but has no default value, or if config is invalid.
+
+        """
         if self.default_value is None:
             raise ValueError(
                 f"Variable '{self.name}' is read-only but has no default value."
             )
 
-        # Extract scalar value from default if it's a tensor
-        if isinstance(self.default_value, Tensor):
-            expected_scalar = self.default_value.item()
-        else:
-            expected_scalar = self.default_value
+        # Unbatch if appropriate and get samples
+        samples = self._unbatch(value) if isinstance(value, Tensor) else (value,)
 
-        # Extract scalar value from input
-        if isinstance(value, Tensor):
-            scalar_value = value.item()
+        # Get expected scalar
+        if not isinstance(self.default_value, Tensor):
+            expected = torch.tensor(self.default_value)
         else:
-            scalar_value = value
+            expected = self.default_value
 
-        if abs(expected_scalar - scalar_value) >= 1e-9:
-            raise ValueError(
+        failed = []
+        for idx, sample in enumerate(samples):
+            actual = sample if isinstance(sample, Tensor) else torch.tensor(sample)
+            if not torch.isclose(actual, expected, rtol=rtol, atol=atol):
+                failed.append(idx)
+
+        config_enum = self._validation_config_as_enum(config)
+        if failed:
+            msg = (
                 f"Variable '{self.name}' is read-only and must equal its default value "
-                f"({expected_scalar}), but received {scalar_value}."
+                f"({expected}), but found {len(failed)} mismatches at indices (flattened) {failed}."
             )
-
-    def iter_validation_samples(self, value: Union[Tensor, float]) -> Any:
-        """Unbatch scalar tensors into 0D scalar samples."""
-        if isinstance(value, Tensor) and value.ndim > 0:
-            return value.flatten()
-        return (value,)
-
-    def validate_batched_value(
-        self, value: Union[Tensor, float], config: Optional[ConfigEnum] = None
-    ) -> None:
-        """Batch-aware validation entry point."""
-        _validate_batched_value_from_samples(
-            self,
-            self.iter_validation_samples(value),
-            config=config,
-            validate_every_sample=True,
-        )
+            if config_enum == ConfigEnum.ERROR:
+                raise ValueError(msg)
+            elif config_enum == ConfigEnum.WARN:
+                warnings.warn(msg)
+        return failed
 
 
 class TorchNDVariable(NDVariable):
-    """Variable for PyTorch tensor data.
+    """Variable for PyTorch tensor data with arbitrary shape and dtype.
 
     Attributes
     ----------
@@ -371,7 +418,7 @@ class TorchNDVariable(NDVariable):
     """
 
     default_value: Optional[Tensor] = None
-    dtype: torch.dtype = torch.float32
+    dtype: Union[torch.dtype | str] = torch.float32
 
     array_type: ClassVar[type] = Tensor
 
@@ -463,6 +510,7 @@ class TorchNDVariable(NDVariable):
         dtype mismatch.
 
         """
+        data = _normalize_legacy_read_only(data)
         if isinstance(data, dict):
             dv = data.get("default_value")
             if isinstance(dv, (list, tuple)):
@@ -519,56 +567,120 @@ class TorchNDVariable(NDVariable):
         # Delegate shape / type checks to base
         return super().validate_default_value()
 
-    def _validate_read_only(self, value: Tensor) -> None:
-        """Validates that a read-only ND-variable's value matches its default.
+    def _unbatch(self, value: Tensor) -> Tensor:
+        """Unbatch a tensor with a batch dimension, returning an iterator over samples."""
+        if value.ndim < len(self.shape):
+            raise ValueError(
+                f"Expected tensor with at least {len(self.shape)} dimensions, "
+                f"but got {value.ndim} dimensions with shape {value.shape}."
+            )
+        elif value.ndim == len(self.shape):
+            return (value,)
+        else:
+            actual_shape = value.shape[-len(self.shape) :]
+            if actual_shape != self.shape:
+                raise ValueError(
+                    f"Expected shape {self.shape}, got {actual_shape} "
+                    f"from value with shape {value.shape}."
+                )
+            return value.reshape(-1, *self.shape)
 
-        This method validates a single unbatched tensor. Batch handling is
-        the responsibility of the model layer.
+    def validate_value(self, value: Tensor, config: Optional[ConfigEnum] = None):
+        """Validates the given tensor value, handling batches if present.
+
+        Parameters
+        ----------
+        value : Tensor
+            The tensor value to be validated. Can have a batch dimension as long as the last dimensions
+            match self.shape.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error". If not "none",
+            performs optional range checks on the tensor values.
+
+        Raises
+        ------
+        ValueError
+            If the value fails type/dtype/shape validation or range checks based on config.
+
         """
-        if not self.read_only:
-            return
+        # Validate type and dtype on full tensor
+        self._validate_array_type(value)
+        self._validate_dtype(value, self.dtype)
 
+        # Unbatch if tensor with batch dimension
+        samples = self._unbatch(value)
+
+        # Validate shape strictly on first sample
+        first_sample = (
+            samples[0] if isinstance(samples, (list, tuple)) else next(iter(samples))
+        )
+        self._validate_shape(first_sample, expected_shape=self.shape)
+
+        # No optional range validation for NDVariable (as in parent)
+
+    def validate_read_only(
+        self,
+        value: Tensor,
+        config: Optional[ConfigEnum] = None,
+        rtol: float = 1e-9,
+        atol: float = 1e-9,
+    ) -> list:
+        """Validate that all (possibly batched) tensors equal the default value (with tolerance).
+        Returns a list of failed indices. Follows config for error/warn/none.
+
+        Note that this expects the value to have already passed validate_value, so it assumes the
+        shape and dtype are correct and does not re-check those.
+
+        Parameters
+        ----------
+        value : Tensor
+            The tensor value to be validated. Can have a batch dimension as long as the last dimensions
+            match self.shape.
+        config : ConfigEnum, optional
+            The configuration for validation. Defaults to None.
+            Allowed values are "none", "warn", and "error".
+        rtol : float, optional
+            Relative tolerance for comparison. Defaults to 1e-9.
+        atol : float, optional
+            Absolute tolerance for comparison. Defaults to 1e-9.
+
+        Returns
+        -------
+        list
+            A list of indices (flattened) where the value does not match the default value within
+            the specified tolerances.
+
+        Raises
+        ------
+        ValueError
+            If the variable is read-only but has no default value, or if config is invalid.
+
+        """
         if self.default_value is None:
             raise ValueError(
                 f"Variable '{self.name}' is read-only but has no default value."
             )
 
-        if not torch.allclose(value, self.default_value, rtol=1e-9, atol=1e-9):
-            raise ValueError(
+        # Unbatch if tensor with batch dimension
+        samples = self._unbatch(value)
+
+        failed = []
+        for idx, sample in enumerate(samples):
+            if not torch.allclose(sample, self.default_value, rtol=rtol, atol=atol):
+                failed.append(idx)
+
+        config_enum = self._validation_config_as_enum(config)
+        if failed:
+            msg = (
                 f"Variable '{self.name}' is read-only and must equal its default value, "
-                f"but received different array values."
+                f"but found {len(failed)} mismatches at indices {failed}."
             )
-
-    def validate_value(self, value: Tensor, config: str = None):
-        """Validates the given tensor value.
-
-        Performs type, dtype, and shape validation. Read-only validation
-        is not performed here — it is the responsibility of the model layer
-        to call ``_validate_read_only`` separately when appropriate.
-
-        Parameters
-        ----------
-        value : Tensor
-            The tensor value to validate.
-        config : str, optional
-            The validation configuration.
-
-        """
-        super().validate_value(value, config)
-
-    def iter_validation_samples(self, value: Tensor) -> Any:
-        """Unbatch ND tensors while preserving per-sample shape."""
-        if isinstance(value, Tensor) and value.ndim > len(self.shape):
-            return value.reshape(-1, *self.shape)
-        return (value,)
-
-    def validate_batched_value(
-        self, value: Tensor, config: Optional[ConfigEnum] = None
-    ) -> None:
-        """Batch-aware validation entry point."""
-        _validate_batched_value_from_samples(
-            self, self.iter_validation_samples(value), config=config
-        )
+            if config_enum == ConfigEnum.ERROR:
+                raise ValueError(msg)
+            elif config_enum == ConfigEnum.WARN:
+                warnings.warn(msg)
+        return failed
 
 
 # Alias TorchScalarVariable as ScalarVariable for backwards compatibility

@@ -577,60 +577,6 @@ class LUMETorch(BaseModel, ABC):
             var.validate_value(value, config=_config)
         return output_dict
 
-    def _validate_dict_per_variable(
-        self,
-        data_dict: dict[str, Any],
-        variables: list,
-        validation_config: Optional[dict[str, ConfigEnum]],
-    ):
-        """Validate each variable using a variable-level model-validation hook.
-
-        Variables may implement ``validate_batched_value(value, config=...)`` to
-        handle batching/unbatching and per-sample read-only checks. If the hook
-        is absent, validation falls back to ``validate_value`` and optional
-        ``_validate_read_only`` for the provided value.
-
-        Parameters
-        ----------
-        data_dict : dict of str to Any
-            Dictionary of variable names to values.
-        variables : list
-            List of variable objects to validate against.
-        validation_config : dict of str to ConfigEnum or None
-            Per-variable validation configuration.
-
-        Raises
-        ------
-        ValueError
-            If ``data_dict`` contains a name that does not appear in
-            ``variables``.
-
-        """
-        var_names = [v.name for v in variables]
-
-        for name in data_dict:
-            if name not in var_names:
-                raise ValueError(
-                    f"Variable {name} not found in model variables: {var_names}."
-                )
-
-        for var in variables:
-            if var.name not in data_dict:
-                continue
-            value = data_dict[var.name]
-            _config = (
-                None if validation_config is None else validation_config.get(var.name)
-            )
-
-            validate_batched_value = getattr(var, "validate_batched_value", None)
-            if callable(validate_batched_value):
-                validate_batched_value(value, config=_config)
-                continue
-
-            var.validate_value(value, config=_config)
-            if hasattr(var, "_validate_read_only") and var.read_only:
-                var._validate_read_only(value)
-
     def to_json(self, **kwargs) -> str:
         """Serializes the model to a JSON formatted string.
 
@@ -784,7 +730,7 @@ class LUMETorch(BaseModel, ABC):
             return cls.from_yaml(file)
 
     @classmethod
-    def from_yaml(cls, yaml_obj: [str, TextIOWrapper]):
+    def from_yaml(cls, yaml_obj: str | TextIOWrapper):
         """Loads a model from a YAML string or file object.
 
         Parameters

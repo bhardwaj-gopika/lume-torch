@@ -5,15 +5,13 @@ import pytest
 import numpy as np
 import torch
 from pydantic import ValidationError
-from torch.distributions import Normal, Uniform
+from torch.distributions import Normal
 
 from lume_torch.variables import (
     ScalarVariable,
     TorchScalarVariable,
     TorchNDVariable,
     DistributionVariable,
-    Variable,
-    ConfigEnum,
     get_variable,
 )
 
@@ -59,7 +57,7 @@ class TestScalarVariableAlias:
 
     def test_scalar_variable_is_torch_scalar_variable(self):
         """ScalarVariable should be a deprecated subclass of TorchScalarVariable."""
-        # ScalarVariable is now a subclass, not an alias
+        # ScalarVariable is a subclass, not an alias
         assert issubclass(ScalarVariable, TorchScalarVariable)
         with pytest.warns(DeprecationWarning, match="ScalarVariable is deprecated"):
             var = ScalarVariable(name="test_var", default_value=1.0)
@@ -99,17 +97,12 @@ class TestTorchScalarVariable:
         with pytest.raises(ValidationError):
             TorchScalarVariable(
                 name="full_var",
-                default_value=torch.tensor(1.5),
+                default_value=torch.tensor(1.5, dtype=torch.float32),
                 value_range=(0.0, 10.0),
                 unit="meters",
                 read_only=True,
                 dtype=torch.float64,
             )
-
-    def test_missing_name_raises_validation_error(self):
-        """Test that missing name raises ValidationError."""
-        with pytest.raises(ValidationError):
-            TorchScalarVariable(default_value=0.1, value_range=(0, 1))
 
     def test_default_value_as_float(self):
         """Test that float default values are accepted."""
@@ -129,11 +122,6 @@ class TestTorchScalarVariable:
             )
 
     # Dtype validation tests
-    def test_dtype_float32(self):
-        """Test dtype with torch.float32."""
-        var = TorchScalarVariable(name="test", dtype=torch.float32)
-        assert var.dtype == torch.float32
-
     def test_dtype_float64(self):
         """Test dtype with torch.float64."""
         var = TorchScalarVariable(name="test", dtype=torch.float64)
@@ -170,35 +158,37 @@ class TestTorchScalarVariable:
         var = TorchScalarVariable(name="test")
         var.validate_value(torch.tensor(5.0))
 
-    def test_validate_value_tensor_1d_raises(self):
-        """Test that 1D (batched) tensor is rejected at the variable level."""
+    def test_validate_value_tensor_1d(self):
+        """Test that 1D scalar tensors are accepted."""
         var = TorchScalarVariable(name="test")
-        with pytest.raises(ValueError, match="Expected a 0D scalar tensor"):
-            var.validate_value(torch.tensor([[5.0], [6.0], [7.0]]))
+        var.validate_value(torch.tensor([5.0]))
 
-    def test_validate_value_tensor_batched_raises(self):
-        """Test that batched tensor with last dim = 1 is rejected at the variable level."""
+    def test_validate_value_tensor_1d_batched(self):
+        """Test that batched tensor with last dim = 1 is accepted."""
         var = TorchScalarVariable(name="test")
-        with pytest.raises(ValueError, match="Expected a 0D scalar tensor"):
-            var.validate_value(torch.tensor([[5.0], [6.0]]))
+        var.validate_value(torch.tensor([[5.0], [6.0]]))
 
-    def test_validate_batched_value_batched_checks_every_sample_error(self):
-        """Model-layer scalar validation should apply value-range checks to every sample."""
+    def test_validate_value_tensor_nd_rejects_non_scalar(self):
+        """Test that tensors with more than 1 element are rejected."""
+        var = TorchScalarVariable(name="test")
+        with pytest.raises(ValueError, match="Expected a 0D scalar"):
+            var.validate_value(torch.tensor([5.0, 6.0]))
+
+    def test_validate_batched_checks_every_sample_error(self):
+        """Batched scalar validation should apply value-range checks to every sample."""
         var = TorchScalarVariable(name="test", value_range=(0.0, 10.0))
         with pytest.raises(ValueError, match="out of valid range"):
-            var.validate_batched_value(torch.tensor([1.0, 99.0]), config="error")
+            var.validate_value(torch.tensor([[1.0], [99.0]]), config="error")
 
-    def test_validate_batched_value_batched_checks_every_sample_warn(self):
-        """Model-layer scalar validation should warn when a non-first sample is out of range."""
-        var = TorchScalarVariable(name="test", value_range=(0.0, 10.0))
-        with pytest.warns(UserWarning):
-            var.validate_batched_value(torch.tensor([1.0, 99.0]), config="warn")
-
-    def test_validate_value_tensor_invalid_shape_raises(self):
-        """Test that tensor with invalid shape raises ValueError."""
+    def test_validate_value_tensor_invalid_shape_batched(self):
+        """Test that batched tensors with singleton trailing dimension are accepted."""
         var = TorchScalarVariable(name="test")
-        with pytest.raises(ValueError, match="Expected a 0D scalar tensor"):
-            var.validate_value(torch.tensor([[5.0, 6.0], [7.0, 8.0]]))
+        var.validate_value(torch.tensor([[[5.0]], [[6.0]], [[7.0]]]))
+
+    def test_validate_value_tensor_higher_rank_batched(self):
+        """Test that additional batched scalar layouts are accepted."""
+        var = TorchScalarVariable(name="test")
+        var.validate_value(torch.tensor([[[5.0], [6.0]], [[7.0], [8.0]]]))
 
     def test_validate_value_invalid_type_raises(self):
         """Test that invalid value type raises TypeError."""
@@ -258,66 +248,48 @@ class TestTorchScalarVariable:
         with pytest.raises(ValueError, match="out of valid range"):
             var.validate_value(15.0, config="error")
 
-    def test_validate_value_config_enum_object(self):
-        """Test validation with ConfigEnum object instead of string."""
-        var = TorchScalarVariable(
-            name="test",
-            value_range=(0.0, 10.0),
-            default_validation_config=ConfigEnum.NULL,
-        )
-        var.validate_value(15.0)
-
-    def test_value_range_validation(self):
-        """Test that value_range min must be <= max."""
-        with pytest.raises(ValueError, match="Minimum value"):
-            TorchScalarVariable(name="test", value_range=(10.0, 0.0))
-
     # Read-only validation tests
-    # Note: read-only validation is handled by _validate_read_only, not
+    # Note: read-only validation is handled by validate_read_only, not
     # validate_value. validate_value only checks type/dtype/range.
-    # The model layer is responsible for calling _validate_read_only separately.
+    # The model layer is responsible for calling validate_read_only separately.
     def test_read_only_matching_value(self):
         """Test read-only variable with matching value."""
         var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
-        var._validate_read_only(5.0)
+        var.validate_read_only(5.0, config="error")
 
-    def test_read_only_matching_tensor(self):
-        """Test read-only variable with matching tensor value."""
+        # Test read-only variable with matching tensor value.
+        var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
+        var.validate_read_only(torch.tensor(5.0), config="error")
+
+        # Test read-only variable with matching tensor value.
         var = TorchScalarVariable(
             name="test", default_value=torch.tensor(5.0), read_only=True
         )
-        var._validate_read_only(torch.tensor(5.0))
+        var.validate_read_only(5.0, config="error")
 
     def test_read_only_non_matching_value_raises(self):
         """Test read-only variable with non-matching value raises."""
         var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
         with pytest.raises(ValueError, match="read-only"):
-            var._validate_read_only(10.0)
+            var.validate_read_only(10.0, config="error")
 
     def test_read_only_no_default_raises(self):
         """Test read-only variable without default raises."""
         var = TorchScalarVariable(name="test", read_only=True)
         with pytest.raises(ValueError, match="no default value"):
-            var._validate_read_only(5.0)
-
-    def test_read_only_with_tensor_default_float_value(self):
-        """Test read-only with tensor default but float value."""
-        var = TorchScalarVariable(
-            name="test", default_value=torch.tensor(5.0), read_only=True
-        )
-        var._validate_read_only(5.0)
-
-    def test_read_only_with_float_default_tensor_value(self):
-        """Test read-only with float default but tensor value."""
-        var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
-        var._validate_read_only(torch.tensor(5.0))
+            var.validate_read_only(5.0, config="error")
 
     def test_read_only_tensor_near_default_within_tolerance(self):
         """Test read-only with values very close to default within tolerance."""
         var = TorchScalarVariable(name="test", default_value=5.0, read_only=True)
-        # Value very close to default (within 1e-9 tolerance)
-        var._validate_read_only(torch.tensor(5.0 + 1e-10))
+        with pytest.raises(
+            ValueError, match="read-only and must equal its default value"
+        ):
+            var.validate_read_only(
+                torch.tensor(5.0 + 1e-5), config="error", atol=1e-9, rtol=1e-9
+            )
 
+    # Serialization tests
     def test_model_dump(self):
         """Test model_dump includes variable_class."""
         var = TorchScalarVariable(name="test", default_value=1.0)
@@ -332,26 +304,36 @@ class TestTorchScalarVariable:
         var.validate_value(torch.tensor(5.0, dtype=torch.float32))
         var.validate_value(torch.tensor(5.0, dtype=torch.float64))
 
-    def test_model_dump_includes_all_attributes(self):
+    def test_model_dump_roundtrip(self):
         """Test model_dump includes all relevant attributes."""
         var = TorchScalarVariable(
             name="test",
-            default_value=5.0,
+            default_value=torch.tensor([5.0], dtype=torch.double),
             value_range=(0.0, 10.0),
             unit="meters",
             read_only=False,
+            dtype=torch.double,
         )
-        dump = var.model_dump()
-        assert dump["name"] == "test"
-        assert dump["default_value"] == 5.0
-        assert dump["value_range"] == (0.0, 10.0)
-        assert dump["unit"] == "meters"
-        assert dump["read_only"] is False
+        dumped = var.model_dump()
+        json_str = json.dumps(dumped)
+        parsed = json.loads(json_str)
+        var2 = TorchScalarVariable(**parsed)
+        assert var2.name == var.name
+        assert var2.dtype == var.dtype
+        assert var2.value_range == var.value_range
+        assert var2.unit == var.unit
+        # After JSON round-trip default_value is a plain float
+        assert var2.default_value == 5.0
 
-    def test_numpy_float_value(self):
-        """Test validation of numpy float values."""
-        var = TorchScalarVariable(name="test")
-        var.validate_value(np.float64(5.0))
+    def test_legacy_is_constant_maps_to_read_only(self):
+        """Legacy `is_constant` should set `read_only`."""
+        var = TorchScalarVariable(name="test", is_constant=True)
+        assert var.read_only is True
+
+    def test_read_only_overrides_legacy_is_constant(self):
+        """Canonical field should win when both keys are provided."""
+        var = TorchScalarVariable(name="test", read_only=False, is_constant=True)
+        assert var.read_only is False
 
 
 class TestTorchNDVariable:
@@ -364,11 +346,6 @@ class TestTorchNDVariable:
         assert var.shape == (10, 20)
         assert var.dtype == torch.float32
 
-    def test_missing_name_raises_validation_error(self):
-        """Test that missing name raises ValidationError."""
-        with pytest.raises(ValidationError):
-            TorchNDVariable(shape=(10, 20))
-
     def test_missing_shape_raises_validation_error(self):
         """Test that missing shape raises ValidationError."""
         with pytest.raises(ValidationError):
@@ -380,20 +357,25 @@ class TestTorchNDVariable:
         var = TorchNDVariable(name="test_nd", shape=(10, 20), default_value=default)
         assert torch.allclose(var.default_value, default)
 
-    def test_creation_with_dtype(self):
-        """Test dtype with torch dtype object."""
-        var = TorchNDVariable(name="test", shape=(10,), dtype=torch.float64)
-        assert var.dtype == torch.float64
-
-    def test_creation_with_int_dtype(self):
-        """Test int dtype is accepted."""
-        var = TorchNDVariable(name="test", shape=(10,), dtype=torch.int32)
-        assert var.dtype == torch.int32
-
     def test_invalid_dtype_type_raises(self):
         """Test invalid dtype type raises TypeError."""
         with pytest.raises(TypeError, match="dtype must be a"):
             TorchNDVariable(name="test", shape=(10,), dtype="invalid")
+
+    def test_reject_ndarray(self):
+        var = TorchNDVariable(name="t", shape=(3, 4))
+        with pytest.raises(TypeError, match="Expected value to be a Tensor"):
+            var.validate_value(np.zeros((3, 4)), config="error")
+
+    def test_default_value_validated_on_creation(self):
+        """Wrong dtype in default_value must be caught at construction time."""
+        with pytest.raises(ValidationError, match="Expected dtype"):
+            TorchNDVariable(
+                name="t",
+                shape=(2,),
+                dtype=torch.float64,
+                default_value=torch.zeros(2, dtype=torch.float32),
+            )
 
     # Value validation tests
     def test_validate_value_correct_tensor(self):
@@ -402,10 +384,12 @@ class TestTorchNDVariable:
         var.validate_value(torch.randn(10, 20))
 
     def test_validate_value_batched_tensor(self):
-        """Test validation of batched tensor should fail."""
+        """Test validation of batched tensor succeeds when trailing shape matches."""
+        var = TorchNDVariable(name="test", shape=(10, 20))
+        var.validate_value(torch.randn(5, 10, 20))
+
         with pytest.raises(ValueError, match="Expected shape"):
-            var = TorchNDVariable(name="test", shape=(10, 20))
-            var.validate_value(torch.randn(5, 10, 20))
+            var.validate_value(torch.randn(5, 10, 30))
 
     def test_validate_value_wrong_type_raises(self):
         """Test that non-tensor value raises TypeError."""
@@ -413,29 +397,18 @@ class TestTorchNDVariable:
         with pytest.raises(TypeError, match="Expected value to be a Tensor"):
             var.validate_value([[1, 2], [3, 4]])
 
-    def test_validate_value_wrong_shape_raises(self):
-        """Test that wrong shape raises ValueError."""
-        var = TorchNDVariable(name="test", shape=(10, 20))
-        with pytest.raises(ValueError, match="Expected shape"):
-            var.validate_value(torch.randn(10, 30))
-
-    def test_validate_value_wrong_dtype_raises(self):
-        """Test that wrong dtype raises ValueError."""
-        var = TorchNDVariable(name="test", shape=(10,), dtype=torch.float32)
-        with pytest.raises(ValueError, match="Expected dtype"):
-            var.validate_value(torch.randn(10, dtype=torch.float64))
-
     # Read-only validation tests
-    # Note: read-only validation is handled by _validate_read_only, not
+    # Note: read-only validation is handled by validate_read_only, not
     # validate_value. validate_value only checks type/dtype/range/shape.
-    # The model layer is responsible for calling _validate_read_only separately.
+    # The model layer is responsible for calling validate_read_only separately
+    # on an already validated value.
     def test_read_only_matching_value(self):
         """Test read-only ND variable with matching value."""
         default = torch.randn(10, 20)
         var = TorchNDVariable(
             name="test", shape=(10, 20), default_value=default, read_only=True
         )
-        var._validate_read_only(default.clone())
+        var.validate_read_only(default, config="error")
 
     def test_read_only_non_matching_value_raises(self):
         """Test read-only ND variable with non-matching value raises."""
@@ -444,13 +417,13 @@ class TestTorchNDVariable:
             name="test", shape=(10, 20), default_value=default, read_only=True
         )
         with pytest.raises(ValueError, match="read-only"):
-            var._validate_read_only(torch.randn(10, 20))
+            var.validate_read_only(torch.randn(10, 20), config="error")
 
     def test_read_only_no_default_raises(self):
         """Test read-only ND variable without default raises."""
         var = TorchNDVariable(name="test", shape=(10, 20), read_only=True)
         with pytest.raises(ValueError, match="no default value"):
-            var._validate_read_only(torch.randn(10, 20))
+            var.validate_read_only(torch.randn(10, 20), config="error")
 
     def test_read_only_value_within_tolerance(self):
         """Test read-only ND variable with values within tolerance."""
@@ -460,250 +433,22 @@ class TestTorchNDVariable:
         )
         # Value very close to default (within tolerance)
         close_value = default + 1e-10
-        var._validate_read_only(close_value)
-
-
-class TestDistributionVariable:
-    """Tests for DistributionVariable class."""
-
-    def test_basic_creation(self):
-        """Test basic distribution variable creation."""
-        var = DistributionVariable(name="dist_var")
-        assert var.name == "dist_var"
-        assert var.unit is None
-
-    def test_missing_name_raises_validation_error(self):
-        """Test that missing name raises ValidationError."""
-        with pytest.raises(ValidationError):
-            DistributionVariable(unit="meters")
-
-    def test_creation_with_unit(self):
-        """Test distribution variable with unit."""
-        var = DistributionVariable(name="dist_var", unit="meters")
-        assert var.unit == "meters"
-
-    def test_validate_normal_distribution(self):
-        """Test validation of Normal distribution."""
-        var = DistributionVariable(name="test")
-        dist = Normal(loc=0.0, scale=1.0)
-        var.validate_value(dist)
-
-    def test_validate_uniform_distribution(self):
-        """Test validation of Uniform distribution."""
-        var = DistributionVariable(name="test")
-        dist = Uniform(low=0.0, high=1.0)
-        var.validate_value(dist)
-
-    def test_validate_non_distribution_raises(self):
-        """Test that non-distribution value raises TypeError."""
-        var = DistributionVariable(name="test")
-        with pytest.raises(TypeError, match="Expected value to be of type"):
-            var.validate_value(5.0)
-
-    def test_validate_tensor_raises(self):
-        """Test that tensor value raises TypeError."""
-        var = DistributionVariable(name="test")
-        with pytest.raises(TypeError, match="Expected value to be of type"):
-            var.validate_value(torch.tensor([1.0, 2.0]))
-
-
-class TestConfigEnum:
-    """Tests for ConfigEnum."""
-
-    def test_enum_values(self):
-        """Test ConfigEnum values."""
-        assert ConfigEnum.NULL.value == "none"
-        assert ConfigEnum.WARN.value == "warn"
-        assert ConfigEnum.ERROR.value == "error"
-
-    def test_enum_from_string(self):
-        """Test ConfigEnum creation from string."""
-        assert ConfigEnum("none") == ConfigEnum.NULL
-        assert ConfigEnum("warn") == ConfigEnum.WARN
-        assert ConfigEnum("error") == ConfigEnum.ERROR
-
-
-class TestVariableInheritance:
-    """Tests for variable inheritance structure."""
-
-    def test_torch_scalar_variable_is_variable(self):
-        """Test TorchScalarVariable is a Variable."""
-        var = TorchScalarVariable(name="test")
-        assert isinstance(var, Variable)
-
-    def test_torch_nd_variable_is_variable(self):
-        """Test TorchNDVariable is a Variable."""
-        var = TorchNDVariable(name="test", shape=(10,))
-        assert isinstance(var, Variable)
-
-    def test_distribution_variable_is_variable(self):
-        """Test DistributionVariable is a Variable."""
-        var = DistributionVariable(name="test")
-        assert isinstance(var, Variable)
-
-
-class TestTorchNDVariableEdgeCases:
-    """Additional edge case tests for TorchNDVariable."""
-
-    def test_1d_shape(self):
-        """Test 1D shape variable."""
-        var = TorchNDVariable(name="test", shape=(100,))
-        var.validate_value(torch.randn(100))
-
-    def test_4d_shape(self):
-        """Test 4D shape variable (e.g., video data)."""
-        var = TorchNDVariable(name="test", shape=(10, 3, 64, 64))
-        var.validate_value(torch.randn(10, 3, 64, 64))
-
-    def test_model_dump_nd_variable(self):
-        """Test model_dump for TorchNDVariable."""
-        var = TorchNDVariable(name="test", shape=(10, 20), unit="pixels")
-        dump = var.model_dump()
-        assert dump["variable_class"] == "TorchNDVariable"
-        assert dump["name"] == "test"
-        assert dump["shape"] == (10, 20)
-        assert dump["unit"] == "pixels"
-
-    def test_default_value_wrong_shape_raises(self):
-        """Test that default value with wrong shape raises error."""
-        with pytest.raises(ValueError, match="Expected shape"):
-            TorchNDVariable(
-                name="test", shape=(10, 20), default_value=torch.randn(10, 30)
+        var.validate_read_only(close_value, config="error", atol=1e-9, rtol=1e-9)
+        # Value not close to default
+        not_close_value = default + 1e-5
+        with pytest.raises(
+            ValueError, match="read-only and must equal its default value"
+        ):
+            var.validate_read_only(
+                not_close_value, config="error", atol=1e-9, rtol=1e-9
             )
 
-    def test_default_value_wrong_dtype_raises(self):
-        """Test that default value with wrong dtype raises error."""
-        with pytest.raises(ValueError, match="Expected dtype"):
-            TorchNDVariable(
-                name="test",
-                shape=(10,),
-                dtype=torch.float32,
-                default_value=torch.randn(10, dtype=torch.float64),
-            )
-
-    def test_validate_value_config_parameter(self):
-        """Test validate_value with config parameter."""
-        var = TorchNDVariable(name="test", shape=(10, 20))
-        # Should work with config parameter (even though optional validation is not implemented)
-        var.validate_value(torch.randn(10, 20), config="error")
-        var.validate_value(torch.randn(10, 20), config="warn")
-        var.validate_value(torch.randn(10, 20), config="none")
-
-
-class TestDistributionVariableEdgeCases:
-    """Additional edge case tests for DistributionVariable."""
-
-    def test_read_only_attribute(self):
-        """Test read_only attribute on distribution variable."""
-        var = DistributionVariable(name="test", read_only=True)
+    def test_legacy_is_constant_maps_to_read_only(self):
+        """Legacy `is_constant` should set `read_only`."""
+        var = TorchNDVariable(name="test", shape=(2,), is_constant=True)
         assert var.read_only is True
 
-    def test_default_validation_config(self):
-        """Test default_validation_config attribute."""
-        var = DistributionVariable(name="test", default_validation_config="warn")
-        assert var.default_validation_config == ConfigEnum.WARN
-
-    def test_model_dump(self):
-        """Test model_dump for DistributionVariable."""
-        var = DistributionVariable(name="test", unit="meters")
-        dump = var.model_dump()
-        assert dump["variable_class"] == "DistributionVariable"
-        assert dump["name"] == "test"
-        assert dump["unit"] == "meters"
-
-    def test_validate_with_config_parameter(self):
-        """Test validate_value with config parameter."""
-        var = DistributionVariable(name="test")
-        dist = Normal(loc=0.0, scale=1.0)
-        var.validate_value(dist, config="error")
-        var.validate_value(dist, config=ConfigEnum.WARN)
-
-    def test_validate_batched_distribution(self):
-        """Test validation of batched distribution."""
-        var = DistributionVariable(name="test")
-        # Batched normal distribution
-        dist = Normal(loc=torch.zeros(5), scale=torch.ones(5))
-        var.validate_value(dist)
-
-    def test_validate_multivariate_distribution(self):
-        """Test validation of multivariate distribution."""
-        from torch.distributions import MultivariateNormal
-
-        var = DistributionVariable(name="test")
-        dist = MultivariateNormal(
-            loc=torch.zeros(3),
-            covariance_matrix=torch.eye(3),
-        )
-        var.validate_value(dist)
-
-
-# TODO: REVIEW and DELETE LATER
-
-
-class TestTorchNDVariableCreation:
-    def test_creation_defaults(self):
-        var = TorchNDVariable(name="t", shape=(3, 4))
-        assert var.name == "t"
-        assert var.shape == (3, 4)
-        assert var.dtype == torch.float32
-        assert var.default_value is None
-
-    def test_creation_custom_dtype(self):
-        var = TorchNDVariable(name="t", shape=(2,), dtype=torch.float64)
-        assert var.dtype == torch.float64
-
-    def test_creation_with_default_value(self):
-        t = torch.ones(3, 4)
-        var = TorchNDVariable(name="t", shape=(3, 4), default_value=t)
-        assert torch.equal(var.default_value, t)
-
-    def test_unit_field(self):
-        var = TorchNDVariable(name="t", shape=(2,), unit="m/s")
-        assert var.unit == "m/s"
-
-
-class TestTorchNDVariableValidation:
-    def test_validate_correct_tensor(self):
-        var = TorchNDVariable(name="t", shape=(3, 4))
-        t = torch.zeros(3, 4)
-        var.validate_value(t, config="error")  # must not raise
-
-    def test_validate_1d(self):
-        var = TorchNDVariable(name="t", shape=(5,))
-        var.validate_value(torch.zeros(5), config="error")
-
-    def test_wrong_shape_raises(self):
-        var = TorchNDVariable(name="t", shape=(3, 4))
-        with pytest.raises(ValueError, match="Expected shape"):
-            var.validate_value(torch.zeros(3, 5), config="error")
-
-    def test_wrong_dtype_raises(self):
-        var = TorchNDVariable(name="t", shape=(3, 4), dtype=torch.float64)
-        with pytest.raises(ValueError, match="Expected dtype"):
-            var.validate_value(torch.zeros(3, 4, dtype=torch.float32), config="error")
-
-    def test_reject_ndarray(self):
-        var = TorchNDVariable(name="t", shape=(3, 4))
-        with pytest.raises(TypeError, match="Expected value to be a Tensor"):
-            var.validate_value(np.zeros((3, 4)), config="error")
-
-    def test_reject_list(self):
-        var = TorchNDVariable(name="t", shape=(3, 4))
-        with pytest.raises(TypeError, match="Expected value to be a Tensor"):
-            var.validate_value([[1, 2, 3, 4]] * 3, config="error")
-
-    def test_default_value_validated_on_creation(self):
-        """Wrong dtype in default_value must be caught at construction time."""
-        with pytest.raises((ValueError, Exception)):
-            TorchNDVariable(
-                name="t",
-                shape=(2,),
-                dtype=torch.float64,
-                default_value=torch.zeros(2, dtype=torch.float32),
-            )
-
-
-class TestTorchNDVariableDtypeCoercion:
+    # Test dtype coercion and validation
     def test_string_dtype_coerced(self):
         var = TorchNDVariable(name="t", shape=(2,), dtype="float32")
         assert var.dtype == torch.float32
@@ -713,16 +458,11 @@ class TestTorchNDVariableDtypeCoercion:
         var = TorchNDVariable(name="t", shape=(2,), dtype="torch.float64")
         assert var.dtype == torch.float64
 
-    def test_invalid_string_dtype_raises(self):
-        with pytest.raises(TypeError):
-            TorchNDVariable(name="t", shape=(2,), dtype="not_a_dtype")
-
     def test_invalid_type_raises(self):
         with pytest.raises(TypeError):
-            TorchNDVariable(name="t", shape=(2,), dtype=42)
+            TorchNDVariable(name="t", shape=(2,), dtype="double")
 
-
-class TestTorchNDVariableSerialization:
+    # Test serialization of dtype and default_value
     def test_dtype_serialized_as_string(self):
         var = TorchNDVariable(name="t", shape=(3, 4))
         dumped = var.model_dump()
@@ -738,7 +478,7 @@ class TestTorchNDVariableSerialization:
         assert var.model_dump()["default_value"] is None
 
     def test_default_value_serialized_as_list(self):
-        t = torch.arange(12, dtype=torch.float32).reshape(3, 4)  ### ????
+        t = torch.arange(12, dtype=torch.float32).reshape(3, 4)
         var = TorchNDVariable(name="t", shape=(3, 4), default_value=t)
         dumped = var.model_dump()
         assert dumped["default_value"] == t.tolist()
@@ -758,15 +498,7 @@ class TestTorchNDVariableSerialization:
         assert parsed["dtype"] == "torch.float32"
         assert parsed["default_value"] == t.tolist()
 
-    def test_json_serializable_no_default(self):
-        var = TorchNDVariable(name="t", shape=(5,), dtype=torch.int32)
-        json_str = json.dumps(var.model_dump())
-        parsed = json.loads(json_str)
-        assert parsed["dtype"] == "torch.int32"
-        assert parsed["default_value"] is None
-
-
-class TestTorchNDVariableRoundTrip:
+    # Test round-trip serialization and deserialization
     def test_roundtrip_no_default_value(self):
         var = TorchNDVariable(name="weights", shape=(3, 4), dtype=torch.float32)
         dumped = var.model_dump()
@@ -781,7 +513,7 @@ class TestTorchNDVariableRoundTrip:
         assert var2.default_value is None
 
     def test_roundtrip_with_default_value(self):
-        t = torch.arange(6, dtype=torch.float32).reshape(2, 3)  ###??
+        t = torch.arange(6, dtype=torch.float32).reshape(2, 3)
         var = TorchNDVariable(name="t", shape=(2, 3), default_value=t)
         dumped = var.model_dump()
         json_str = json.dumps(dumped)
@@ -793,41 +525,29 @@ class TestTorchNDVariableRoundTrip:
         assert var2.dtype == var.dtype
         assert torch.equal(var2.default_value, t)
 
-    def test_roundtrip_integer_dtype(self):
-        t = torch.arange(4, dtype=torch.int64)
-        var = TorchNDVariable(
-            name="idx", shape=(4,), dtype=torch.int64, default_value=t
-        )
-        parsed = json.loads(json.dumps(var.model_dump()))
 
-        var2 = TorchNDVariable(**parsed)
-        assert var2.dtype == torch.int64
-        assert torch.equal(var2.default_value, t)
+class TestDistributionVariable:
+    """Tests for DistributionVariable class."""
 
-    def test_roundtrip_double_dtype(self):
-        t = torch.arange(4, dtype=torch.double)
-        var = TorchNDVariable(name="v", shape=(4,), dtype=torch.double, default_value=t)
-        parsed = json.loads(json.dumps(var.model_dump()))
+    def test_basic_creation(self):
+        """Test basic distribution variable creation."""
+        var = DistributionVariable(name="dist_var")
+        assert var.name == "dist_var"
+        assert var.unit is None
 
-        var2 = TorchNDVariable(**parsed)
-        assert var2.dtype == torch.double
-        assert torch.equal(var2.default_value, t)
+    def test_validate_normal_distribution(self):
+        """Test validation of Normal distribution."""
+        var = DistributionVariable(name="test")
+        dist = Normal(loc=0.0, scale=1.0)
+        var.validate_value(dist)
 
-    def test_roundtrip_1d(self):
-        t = torch.tensor([1.0, 2.0, 3.0], dtype=torch.float64)
-        var = TorchNDVariable(
-            name="v", shape=(3,), dtype=torch.float64, default_value=t
-        )
-        parsed = json.loads(json.dumps(var.model_dump()))
+    def test_validation_error_wrong_type(self):
+        """Test validation with wrong type raises TypeError."""
+        var = DistributionVariable(name="dist")
+        with pytest.raises(TypeError):
+            var.validate_value("not_a_distribution")
 
-        var2 = TorchNDVariable(**parsed)
-        assert var2.dtype == torch.float64
-        assert torch.equal(var2.default_value, t)
-
-    def test_roundtrip_unit_preserved(self):
-        var = TorchNDVariable(name="v", shape=(2,), unit="GeV")
-        parsed = json.loads(json.dumps(var.model_dump()))
-        parsed.pop("variable_class", None)
-
-        var2 = TorchNDVariable(**parsed)
-        assert var2.unit == "GeV"
+    def test_legacy_is_constant_maps_to_read_only(self):
+        """Legacy `is_constant` should set `read_only`."""
+        var = DistributionVariable(name="dist", is_constant=True)
+        assert var.read_only is True

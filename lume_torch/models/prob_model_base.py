@@ -199,10 +199,6 @@ class ProbabilisticBaseModel(LUMETorch):
     def input_validation(self, input_dict: dict[str, Union[float, torch.Tensor]]):
         """Validates input dictionary before evaluation.
 
-        Unbatches values before delegating to variable-level validation,
-        since Variable classes expect single-sample values (no batch
-        dimensions).
-
         Parameters
         ----------
         input_dict : dict of str to float or torch.Tensor
@@ -215,10 +211,17 @@ class ProbabilisticBaseModel(LUMETorch):
 
         """
         # type/dtype check on raw user-provided values (before tensor conversion)
-        # Unbatch for per-variable validation
-        self._validate_dict_per_variable(
-            input_dict, self.input_variables, self.input_validation_config
-        )
+        for var in self.input_variables:
+            config = (
+                None
+                if self.input_validation_config is None
+                else self.input_validation_config[var.name]
+            )
+            if var.name not in input_dict:
+                raise ValueError(
+                    f"Missing required input variable '{var.name}' in input_dict."
+                )
+            var.validate_value(input_dict[var.name], config=config)
 
         # format inputs as tensors w/o changing the dtype
         formatted_inputs = format_inputs(input_dict.copy())
@@ -233,18 +236,20 @@ class ProbabilisticBaseModel(LUMETorch):
     def output_validation(self, output_dict: dict[str, TDistribution]):
         """Validates output distributions against output variable specifications.
 
-        Delegates to the shared ``_validate_dict_per_variable`` helper on
-        the base class, which handles unbatching and per-variable validation.
-
         Parameters
         ----------
         output_dict : dict of str to TDistribution
             Output dictionary to validate.
 
         """
-        self._validate_dict_per_variable(
-            output_dict, self.output_variables, self.output_validation_config
-        )
+        for var in self.output_variables:
+            config = (
+                None
+                if self.output_validation_config is None
+                else self.output_validation_config[var.name]
+            )
+            if var.name in output_dict:
+                var.validate_value(output_dict[var.name], config=config)
 
 
 class TorchDistributionWrapper(TDistribution):
