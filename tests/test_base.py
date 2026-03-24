@@ -153,7 +153,7 @@ class TestBaseModel:
             example_model.output_validation(
                 {output_variables[0].name: 1.0, "nonexistent_output": 2.0}
             )
-            
+
 
 class TestLUMETorchModel:
     """Test suite for LUMETorchModel wrapper class."""
