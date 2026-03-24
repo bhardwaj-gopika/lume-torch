@@ -105,7 +105,6 @@ class TestTorchModule:
         for param in lume_module._model.model.parameters():
             assert param.requires_grad
         assert len(parameters_with_requires_grad) == 8
-        print("original shape", california_test_input_tensor.shape)
         outputs = lume_module(california_test_input_tensor)
         loss = criterion(outputs, torch.zeros(outputs.shape, dtype=outputs.dtype))
         loss.backward()
@@ -183,6 +182,7 @@ class TestTorchModule:
         with pytest.raises(ValueError):
             lume_module(input_tensor)
 
+    # TODO: check this test
     def test_tensor_to_dictionary_2d_single_feature_uses_old_format(
         self, california_test_input_tensor, california_model
     ):
