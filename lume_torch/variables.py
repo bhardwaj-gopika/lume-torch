@@ -248,7 +248,7 @@ class TorchScalarVariable(_BaseScalarVariable):
         return self
 
     def _unbatch(self, value: Tensor) -> Tensor:
-        """Unbatch a tensor with a batch dimension, returning an iterator over samples."""
+        """Unbatch a tensor with a batch dimension."""
         if value.ndim == 0:
             return (value,)
         elif value.ndim > 0 and value.shape[-1] == 1:
@@ -307,11 +307,8 @@ class TorchScalarVariable(_BaseScalarVariable):
         samples = self._unbatch(value) if isinstance(value, Tensor) else (value,)
 
         # Validate dtype/type strictly on first sample
-        first_sample = (
-            samples[0] if isinstance(samples, (list, tuple)) else next(iter(samples))
-        )
-        self._validate_value_type(first_sample)
-        self._validate_dtype(first_sample)
+        self._validate_value_type(samples[0])
+        self._validate_dtype(samples[0])
 
         # Optional range validation for all samples if config != NULL
         config_enum = self._validation_config_as_enum(config)
@@ -568,7 +565,7 @@ class TorchNDVariable(NDVariable):
         return super().validate_default_value()
 
     def _unbatch(self, value: Tensor) -> Tensor:
-        """Unbatch a tensor with a batch dimension, returning an iterator over samples."""
+        """Unbatch a tensor with a batch dimension."""
         if value.ndim < len(self.shape):
             raise ValueError(
                 f"Expected tensor with at least {len(self.shape)} dimensions, "
@@ -612,10 +609,7 @@ class TorchNDVariable(NDVariable):
         samples = self._unbatch(value)
 
         # Validate shape strictly on first sample
-        first_sample = (
-            samples[0] if isinstance(samples, (list, tuple)) else next(iter(samples))
-        )
-        self._validate_shape(first_sample, expected_shape=self.shape)
+        self._validate_shape(samples[0], expected_shape=self.shape)
 
         # No optional range validation for NDVariable (as in parent)
 
