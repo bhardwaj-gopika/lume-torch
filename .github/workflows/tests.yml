@@ -35,15 +35,7 @@ jobs:
         run: uv pip list
 
       - name: Run Tests
-        run: |
-          uv run pytest -ra --pyargs tests -v | tee pytest-output.txt
-
-      - name: Add results to summary
-        if: always()
-        run: |
-          echo -e '## Test results\n\n```' >> "$GITHUB_STEP_SUMMARY"
-          cat pytest-output.txt >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
+        run: uv run pytest -ra --pyargs tests -v
 
   test-pypi-build:
     runs-on: ubuntu-latest
