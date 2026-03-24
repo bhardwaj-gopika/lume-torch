@@ -6,7 +6,7 @@ but they can be used to validate encountered values.
 
 import logging
 import warnings
-from typing import Optional, Type, Union, ClassVar, List, Any, Self
+from typing import Optional, Type, Union, ClassVar, List, Any
 
 import torch
 from torch import Tensor
@@ -538,7 +538,7 @@ class TorchNDVariable(NDVariable):
         return value
 
     @model_validator(mode="after")
-    def validate_default_value(self) -> Self:
+    def validate_default_value(self):
         """Cast or validate default_value, then run base shape/type checks.
 
         * If default_value was coerced from a list (flagged by
