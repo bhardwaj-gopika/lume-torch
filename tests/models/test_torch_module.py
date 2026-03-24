@@ -284,13 +284,13 @@ class TestTorchModule:
         input_tensor = california_test_input_tensor.unsqueeze(0).repeat(
             (n_batch, 1, 1, 1)
         )
-        print("input_tensor shape", input_tensor.shape)
         result = california_module(input_tensor)
 
         assert tuple(result.shape) == (n_batch, 3)
         for i in range(n_batch):
             assert_california_module_result(result[i])
 
+    # TODO: check dimensions
     def test_module_as_gp_prior_mean(
         self, california_test_input_tensor, california_module
     ):
