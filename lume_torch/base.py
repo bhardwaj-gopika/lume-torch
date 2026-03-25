@@ -850,7 +850,7 @@ class LUMETorchModel(LUMEModel):
             initial_inputs = self._get_default_inputs()
 
         if initial_inputs:
-            self.set(initial_inputs)
+            self._set(initial_inputs)
 
         # Store initialstate for reset
         self._initial_state = self._state.copy()
