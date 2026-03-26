@@ -874,55 +874,26 @@ class LUMETorchModel(LUMEModel):
     def _get(self, names: list[str]) -> dict[str, Any]:
         """
         Retrieve cached values for specified variables.
-
-        For read_only variables that are not yet in the cache,
-        returns the variable's default_value if available, otherwise logs a warning.
-
         Parameters
         ----------
         names : list[str]
             List of variable names to retrieve.
-
         Returns
         -------
         dict[str, Any]
             Dictionary mapping variable names to their cached values.
-
         Raises
         ------
         KeyError
-            If a requested settable (non-read_only) variable has not been set/computed yet.
+            If a requested variable has not been set/computed yet.
         """
-        result = {}
-        missing_settable = []
-
-        for name in names:
-            if name in self._cache:
-                result[name] = self._cache[name]
-            else:
-                var = self._supported_variables.get(name)
-                if var is None:
-                    raise KeyError(f"Variable '{name}' is not a supported variable.")
-
-                if var.read_only:
-                    # For read_only variables, try to use default_value
-                    default_val = getattr(var, "default_value", None)
-                    if default_val is not None:
-                        result[name] = default_val
-                    else:
-                        logger.warning(
-                            f"Read-only variable '{name}' has no computed value and no default_value."
-                        )
-                else:
-                    missing_settable.append(name)
-
-        if missing_settable:
+        missing = [name for name in names if name not in self._cache]
+        if missing:
             raise KeyError(
-                f"Variables {missing_settable} have not been set yet. "
+                f"Variables {missing} have not been set/computed yet. "
                 f"Call set() with input values first."
             )
-
-        return result
+        return {name: self._cache[name] for name in names}
 
     def _set(self, values: dict[str, Any]) -> None:
         """
@@ -942,22 +913,8 @@ class LUMETorchModel(LUMEModel):
         Raises
         ------
         ValueError
-            If any read_only variable names are passed in values.
             If on first set, required input variables without defaults are missing.
         """
-        # Check for read_only variables that cannot be set
-        read_only_names = [
-            name
-            for name in values
-            if name in self._supported_variables
-            and self._supported_variables[name].read_only
-        ]
-        if read_only_names:
-            raise ValueError(
-                f"Cannot set read-only variable(s): {sorted(read_only_names)}. "
-                f"Read-only variables are computed by the model and cannot be set directly."
-            )
-
         # Build input dict for evaluation
         input_dict = {}
         missing_required = []
@@ -971,6 +928,7 @@ class LUMETorchModel(LUMEModel):
                 input_dict[name] = self._cache[name]
             else:
                 # First set or not in cache: check for default
+                # This will populate read_only variables with defaults on first set
                 var = self._supported_variables.get(name)
                 default_val = getattr(var, "default_value", None) if var else None
                 if default_val is not None:
@@ -981,7 +939,7 @@ class LUMETorchModel(LUMEModel):
         if missing_required:
             if not self._initialized:
                 raise ValueError(
-                    f"First set() requires all input variables. "
+                    f"First set() requires all settable variables. "
                     f"Missing variables without defaults: {sorted(missing_required)}"
                 )
             else:
