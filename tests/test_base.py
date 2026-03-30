@@ -159,15 +159,32 @@ class TestLUMETorchModel:
         """Test initialization of LUMETorchModel with a torch model."""
         wrapper = LUMETorchModel(simple_torch_model)
         assert wrapper.torch_model == simple_torch_model
-        assert len(wrapper._state) > 0  # Should have initial state
+        assert wrapper._cache == {}  # Starts with empty cache
 
-    def test_init_with_initial_inputs(self, simple_torch_model):
-        """Test initialization with explicit initial inputs."""
-        initial_inputs = {"input1": 3.0, "input2": 2.5}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
-        assert wrapper._initial_inputs == initial_inputs
-        assert wrapper._state["input1"] == 3.0
-        assert wrapper._state["input2"] == 2.5
+    def test_get_before_set_raises_error(self, simple_torch_model):
+        """Test that calling get() before set() raises a helpful error."""
+        wrapper = LUMETorchModel(simple_torch_model)
+
+        # Trying to get values before setting any inputs should raise KeyError
+        with pytest.raises(KeyError) as exc_info:
+            wrapper.get(["input1"])
+
+        # Check the error message is helpful
+        assert "have not been set/computed yet" in str(exc_info.value)
+        assert "Call set()" in str(exc_info.value)
+
+    def test_init_and_evaluate(self, simple_torch_model):
+        """Test initialization and evaluation."""
+        wrapper = LUMETorchModel(simple_torch_model)
+
+        # Set inputs
+        wrapper.set({"input1": 3.0, "input2": 2.5})
+
+        # Check cache has inputs and outputs
+        assert wrapper._cache["input1"] == 3.0
+        assert wrapper._cache["input2"] == 2.5
+        assert wrapper._cache["output1"] == 6.0  # 3.0 * 2
+        assert wrapper._cache["output2"] == 5.0  # 2.5 * 2
 
     def test_set_and_get(self, simple_torch_model):
         """Test set and get operations on the wrapper."""
@@ -198,23 +215,26 @@ class TestLUMETorchModel:
         assert variables["output2"].read_only is True
 
     def test_reset(self, simple_torch_model):
-        """Test reset functionality."""
-        initial_inputs = {"input1": 2.0, "input2": 1.5}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
+        """Test reset functionality clears the cache."""
+        wrapper = LUMETorchModel(simple_torch_model)
+
+        # Set initial state
+        wrapper.set({"input1": 2.0, "input2": 1.5})
+        assert wrapper._cache["input1"] == 2.0
+        assert wrapper._cache["output1"] == 4.0
 
         # Change state
         wrapper.set({"input1": 5.0})
-        assert wrapper._state["input1"] == 5.0
+        assert wrapper._cache["input1"] == 5.0
 
-        # Reset
+        # Reset clears the cache
         wrapper.reset()
-        assert wrapper._state["input1"] == 2.0
+        assert wrapper._cache == {}
 
     def test_dump_and_load(self, simple_torch_model, tmp_path):
         """Test dumping and loading the wrapper."""
-        # Create wrapper with initial inputs
-        initial_inputs = {"input1": 3.0, "input2": 2.5}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
+        # Create wrapper
+        wrapper = LUMETorchModel(simple_torch_model)
 
         # Set some values
         wrapper.set({"input1": 4.0, "input2": 3.0})
@@ -231,9 +251,6 @@ class TestLUMETorchModel:
 
         # Load from file
         loaded_wrapper = LUMETorchModel.from_file(str(config_file))
-
-        # Verify initial inputs were restored
-        assert loaded_wrapper._initial_inputs == initial_inputs
 
         # Verify we can run set and get on loaded model
         loaded_wrapper.set({"input1": 4.0, "input2": 3.0})
@@ -265,8 +282,7 @@ class TestLUMETorchModel:
         """Test loading from a YAML string."""
         # First, dump to file
         config_file = tmp_path / "test_yaml_string.yaml"
-        initial_inputs = {"input1": 3.0, "input2": 2.5}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
+        wrapper = LUMETorchModel(simple_torch_model)
         wrapper.dump(str(config_file))
 
         # Read the YAML content
@@ -285,8 +301,7 @@ class TestLUMETorchModel:
     def test_yaml_config_structure(self, simple_torch_model, tmp_path):
         """Test that the dumped YAML has the expected structure."""
         config_file = tmp_path / "test_structure.yaml"
-        initial_inputs = {"input1": 3.0, "input2": 2.5}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
+        wrapper = LUMETorchModel(simple_torch_model)
         wrapper.dump(str(config_file))
 
         # Load and verify YAML structure
@@ -296,12 +311,14 @@ class TestLUMETorchModel:
         assert config["model_class"] == "LUMETorchModel"
         assert "torch_model_file" in config
         assert config["torch_model_file"] == "test_structure_torch_model.yaml"
-        assert config["initial_inputs"] == initial_inputs
+        assert "torch_model_class" in config
 
     def test_set_partial_inputs_preserves_others(self, simple_torch_model):
         """Test that setting only some inputs preserves the others and re-evaluates correctly."""
-        initial_inputs = {"input1": 2.0, "input2": 3.0}
-        wrapper = LUMETorchModel(simple_torch_model, initial_inputs=initial_inputs)
+        wrapper = LUMETorchModel(simple_torch_model)
+
+        # Set initial inputs
+        wrapper.set({"input1": 2.0, "input2": 3.0})
 
         # Get initial output
         initial_result = wrapper.get(["output1", "output2"])
@@ -312,7 +329,7 @@ class TestLUMETorchModel:
         wrapper.set({"input1": 5.0})
 
         # Check that input2 wasn't changed
-        assert wrapper._state["input2"] == 3.0
+        assert wrapper._cache["input2"] == 3.0
 
         # Check that outputs were recalculated with new input1
         result = wrapper.get(["output1", "output2"])

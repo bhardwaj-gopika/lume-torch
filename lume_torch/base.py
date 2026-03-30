@@ -818,109 +818,165 @@ class LUMETorch(BaseModel, ABC):
 
 class LUMETorchModel(LUMEModel):
     """
-    This class Subclasses LUMEModel to create a wrapper around a LUMETorch model.
+    Wrapper around a LUMETorch model that implements the LUMEModel interface.
+
+    This wrapper adapts stateless surrogate models (neural networks, Gaussian processes, etc)
+    to the LUMEModel interface. Since surrogate models are stateless function approximators,
+    the "state" here is simply a cache of the most recent inputs and outputs, not true
+    simulation state. The `reset()` method clears this cache.
 
     Parameters
     ----------
-    torch_model: LUMETorch
+    torch_model : LUMETorch
         An instance of a LUMETorch model to wrap.
+
+    Attributes
+    ----------
+    torch_model : LUMETorch
+        The underlying LUMETorch model.
+
+    Notes
+    -----
+    Unlike physics simulators which have meaningful internal state, surrogate models
+    are stateless and do not maintain state across evaluations. This wrapper implements a cache
+    of the last evaluation to support the get/set interface pattern required by LUMEModel.
     """
 
-    def __init__(
-        self, torch_model: LUMETorch, initial_inputs: Optional[dict[str, Any]] = None
-    ):
+    def __init__(self, torch_model: LUMETorch):
         """
-         Initialize the LUMETorchModel.
+        Initialize the LUMETorchModel.
 
         Parameters
         ----------
         torch_model : LUMETorch
             The LUMETorch model to wrap.
-        initial_inputs : dict[str, Any], optional
-            Initial input values. If None, uses default values from variables.
         """
         self.torch_model = torch_model
-        self._initial_inputs = initial_inputs
+        self._cache: dict[str, Any] = {}
+        self._supported_variables = self._build_supported_variables()
+        self._initialized: bool = False
 
-        # Initialize state
-        self._state = {}
+    def _build_supported_variables(self) -> dict[str, Variable]:
+        """Build the supported-variables dict once.
 
-        # Set initial values
-        if initial_inputs is None:
-            initial_inputs = self._get_default_inputs()
-
-        if initial_inputs:
-            self._set(initial_inputs)
-
-        # Store initialstate for reset
-        self._initial_state = self._state.copy()
-
-    def _get_default_inputs(self) -> dict[str, Any]:
-        """Get default inputs from torch model's input variables"""
-        default_inputs = {}
+        Input variables are referenced directly.  Output variables are
+        shallow-copied with ``read_only=True`` so the originals on
+        ``self.torch_model`` are never mutated.
+        """
+        variables: dict[str, Variable] = {}
         for var in self.torch_model.input_variables:
-            if hasattr(var, "default") and var.default is not None:
-                default_inputs[var.name] = var.default
-            elif hasattr(var, "default_value") and var.default_value is not None:
-                default_inputs[var.name] = var.default_value
-        return default_inputs
+            variables[var.name] = var
+        for var in self.torch_model.output_variables:
+            ro_var = var.model_copy(update={"read_only": True})
+            variables[var.name] = ro_var
+        return variables
 
     def _get(self, names: list[str]) -> dict[str, Any]:
         """
-        Internal method to retrieve current values for specified variables.
-
+        Retrieve cached values for specified variables.
         Parameters
         ----------
         names : list[str]
             List of variable names to retrieve.
-
         Returns
         -------
         dict[str, Any]
-            Dictionary mapping variable names to their current values.
+            Dictionary mapping variable names to their cached values.
+        Raises
+        ------
+        KeyError
+            If a requested variable has not been set/computed yet.
         """
-        return {name: self._state[name] for name in names}
+        missing = [name for name in names if name not in self._cache]
+        if missing:
+            raise KeyError(
+                f"Variables {missing} have not been set/computed yet. "
+                f"Call set() with input values first."
+            )
+        return {name: self._cache[name] for name in names}
 
     def _set(self, values: dict[str, Any]) -> None:
         """
-        Internal method to set input variables and run the torch model.
+        Internal method to set input variables and evaluate the torch model.
+
+        On the first call, all input variables must be provided (or have default values).
+        On subsequent calls, only the values to update need to be passed; previously
+        cached values are reused for any inputs not explicitly provided.
+
+        Read-only variables cannot be set and will raise a ValueError.
 
         Parameters
         ----------
         values : dict[str, Any]
             Dictionary of variable names and values to set.
+
+        Raises
+        ------
+        ValueError
+            If on first set, required input variables without defaults are missing.
         """
-        # Update input values in state
-        self._state.update(values)
+        # Build input dict for evaluation
+        input_dict = {}
+        missing_required = []
 
-        # Prepare inputs for torch model evaluation
-        input_dict = {name: self._state[name] for name in self.torch_model.input_names}
+        for name in self.torch_model.input_names:
+            if name in values:
+                # User provided this value
+                input_dict[name] = values[name]
+            elif self._initialized and name in self._cache:
+                # Subsequent set: reuse cached value
+                input_dict[name] = self._cache[name]
+            else:
+                # First set or not in cache: check for default
+                # This will populate read_only variables with defaults on first set
+                var = self._supported_variables.get(name)
+                default_val = getattr(var, "default_value", None) if var else None
+                if default_val is not None:
+                    input_dict[name] = default_val
+                else:
+                    missing_required.append(name)
 
-        # Evaluate the torch model
+        if missing_required:
+            if not self._initialized:
+                raise ValueError(
+                    f"First set() requires all settable variables. "
+                    f"Missing variables without defaults: {sorted(missing_required)}"
+                )
+            else:
+                raise ValueError(
+                    f"Missing required input variables: {sorted(missing_required)}"
+                )
+
+        # Update cache with input values
+        self._cache.update(input_dict)
+
+        # Evaluate the model
         output_dict = self.torch_model.evaluate(input_dict)
+        self._cache.update(output_dict)
 
-        # Update state with outputs
-        self._state.update(output_dict)
+        # Mark as initialized after successful first set
+        self._initialized = True
 
     def reset(self) -> None:
-        """Reset the model to its initial state."""
-        self._state = self._initial_state.copy()
+        """
+        Clear the input/output cache and reset initialization state.
+
+        For stateless surrogate models, this simply clears the cached values
+        and resets the initialization flag. The model itself has no internal
+        state to reset.
+        """
+        self._cache.clear()
+        self._initialized = False
 
     @property
     def supported_variables(self) -> dict[str, Variable]:
-        """Dictionary of all supported variables."""
-        variables = {}
+        """Dictionary of all supported variables.
 
-        # Add input variables
-        for var in self.torch_model.input_variables:
-            variables[var.name] = var
-
-        # Add output variables (marked as read-only)
-        for var in self.torch_model.output_variables:
-            var.read_only = True
-            variables[var.name] = var
-
-        return variables
+        Input variables reference the originals on the underlying model.
+        Output variables are shallow copies with ``read_only=True``; the
+        originals are never mutated.
+        """
+        return self._supported_variables
 
     def dump(
         self,
@@ -931,9 +987,9 @@ class LUMETorchModel(LUMEModel):
     ):
         """Saves the LUMETorchModel wrapper configuration to a YAML file.
 
-        This method serializes both the underlying torch_model and the wrapper's
-        initial_inputs state. The torch model is saved using its own dump method,
-        and the wrapper configuration references the torch model file.
+        This method serializes the underlying torch_model. The torch model is
+        saved using its own dump method, and the wrapper configuration references
+        the torch model file.
 
         Parameters
         ----------
@@ -978,7 +1034,6 @@ class LUMETorchModel(LUMEModel):
             "model_class": "LUMETorchModel",
             "torch_model_file": torch_model_filename,  # Relative path
             "torch_model_class": torch_model_class_path,  # Store for easier loading
-            "initial_inputs": self._initial_inputs,
         }
 
         # Write wrapper configuration to file
@@ -1124,10 +1179,7 @@ class LUMETorchModel(LUMEModel):
         # Load the torch model
         torch_model = torch_model_class.from_file(torch_model_file)
 
-        # Get initial inputs from config
-        initial_inputs = config.get("initial_inputs", None)
-
         logger.info("Successfully loaded LUMETorchModel wrapper")
 
         # Create and return the wrapper instance
-        return cls(torch_model=torch_model, initial_inputs=initial_inputs)
+        return cls(torch_model=torch_model)
