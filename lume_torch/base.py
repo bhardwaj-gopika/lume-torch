@@ -838,8 +838,8 @@ class LUMETorchModel(LUMEModel):
     Notes
     -----
     Unlike physics simulators which have meaningful internal state, surrogate models
-    are stateless and do not maintain state across evaluations. The "state" in this wrapper is
-    just a cache to support the get/set interface pattern required by LUMEModel.
+    are stateless and do not maintain state across evaluations. This wrapper implements a cache
+    of the last evaluation to support the get/set interface pattern required by LUMEModel.
     """
 
     def __init__(self, torch_model: LUMETorch):
