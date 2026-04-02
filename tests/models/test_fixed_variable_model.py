@@ -47,7 +47,9 @@ def synthetic_lume_torch():
 @pytest.fixture
 def prior_model(synthetic_lume_torch):
     """Create FixedVariableModel with y fixed at 1.0"""
-    return FixedVariableModel(model=synthetic_lume_torch, fixed_values={"y": 1.0}, control_variables=["x"])
+    return FixedVariableModel(
+        model=synthetic_lume_torch, fixed_values={"y": 1.0}, control_variables=["x"]
+    )
 
 
 def test_initialization(prior_model):
@@ -143,13 +145,14 @@ def test_device_compatibility(prior_model):
         output = prior_model(x)
         assert output.device.type == "cuda"
 
+
 def test_control_variable_ordering(synthetic_lume_torch):
     """Test that control variable ordering is preserved."""
     # Test with control variables in specific order
     prior_model = FixedVariableModel(
         model=synthetic_lume_torch,
         fixed_values={"y": 1.0},
-        control_variables=["x"]  # Explicit ordering
+        control_variables=["x"],  # Explicit ordering
     )
     assert prior_model.control_variables == ["x"]
     assert prior_model.control_indices.tolist() == [0]
@@ -157,11 +160,11 @@ def test_control_variable_ordering(synthetic_lume_torch):
 
 def test_multiple_control_variables():
     """Test with multiple control variables and verify ordering."""
-    
+
     class MultiVarModel(torch.nn.Module):
         def forward(self, X):
             # f(a, b, c, d) = a + 2*b + 3*c + 4*d
-            return X[..., 0] + 2*X[..., 1] + 3*X[..., 2] + 4*X[..., 3]
+            return X[..., 0] + 2 * X[..., 1] + 3 * X[..., 2] + 4 * X[..., 3]
 
     input_variables = [
         TorchScalarVariable(name="a", default_value=0.0, value_range=[0.0, 1.0]),
@@ -184,7 +187,7 @@ def test_multiple_control_variables():
     prior_model = FixedVariableModel(
         model=lume_module,
         fixed_values={"b": 1.0, "d": 1.0},
-        control_variables=["a", "c"]  # Explicit order
+        control_variables=["a", "c"],  # Explicit order
     )
 
     # Test with a=2.0, c=3.0 (b=1.0, d=1.0 fixed)
@@ -200,12 +203,12 @@ def test_empty_control_variables(synthetic_lume_torch):
     prior_model = FixedVariableModel(
         model=synthetic_lume_torch,
         fixed_values={"x": 2.0, "y": 1.0},
-        control_variables=[]
+        control_variables=[],
     )
-    
+
     # Empty input tensor
     x = torch.tensor([[]], dtype=torch.float32)
     output = prior_model(x)
-    
+
     # Expected: 0.5 * 4 + 1 = 3.0
     assert abs(output.item() - 3.0) < 1e-5
